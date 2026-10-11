@@ -95,6 +95,7 @@ are restored on close. If you pick keys that already do something else, `omarchy
 - **Pre-launch:** `start_hidden = grok-bot, org.omarchy.agent.claude` takes a comma list of classes to start hidden at login, so the first open is instant.
 - **Tab missing:** its program wasn't found. `doctor` lists skipped agents.
 - **Config errors:** `hyprctl configerrors`. The generated file is `~/.config/hypr/agent-switcher.lua`.
+- **Sign-in opens a browser behind the panel:** a new Chromium, Firefox, Zen, LibreWolf, Brave, Vivaldi, Helium, Floorp, Edge, or qutebrowser window that opens on the agent workspace is moved to the normal workspace and focused, and the panel closes. The panel opens again when that window closes. Run `omarchy-agents rules` after updating so Hyprland loads the listener.
 - **Multi-monitor:** the panel opens on the focused monitor. Inactive agents wait just past that monitor's left and right edges, which can overlap a neighbouring monitor. Please report any issues.
 
 ## Credits

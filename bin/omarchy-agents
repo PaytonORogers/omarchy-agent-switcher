@@ -98,6 +98,51 @@ function agent_switcher.off()
     if d then hl.bind(c.key, d[2](), { description = d[1] }) end
   end
 end
+-- A sign-in browser maps onto the agent workspace while it is showing, under
+-- the floating panel. Move that window to the normal workspace, focus it, and
+-- close the overlay. When the window closes, open the panel again.
+local function agent_switcher_browser(w)
+  local c = string.lower((w.class or "") .. " " .. (w.initial_class or ""))
+  return c:find("chrom", 1, true) or c:find("firefox", 1, true) or c:find("librewolf", 1, true)
+    or c:find("brave", 1, true) or c:find("vivaldi", 1, true) or c:find("helium", 1, true)
+    or c:find("floorp", 1, true) or c:find("qutebrowser", 1, true) or c:find("zen", 1, true)
+    or c:find("edge", 1, true)
+end
+local function agent_switcher_desktop(w)
+  local mon = w.monitor or hl.get_active_monitor()
+  local ws = mon and mon.active_workspace
+  if ws and not ws.special and ws.name and ws.name ~= "" then return ws.name end
+  local active = hl.get_active_workspace()
+  if active and not active.special and active.name and active.name ~= "" then return active.name end
+  return "1"
+end
+if agent_switcher_auth_open then pcall(function() agent_switcher_auth_open:remove() end) end
+if agent_switcher_auth_close then pcall(function() agent_switcher_auth_close:remove() end) end
+agent_switcher_auth_addr = nil
+agent_switcher_auth_open = hl.on("window.open", function(w)
+  if w == nil or not agent_switcher_browser(w) then return end
+  local ws = w.workspace
+  if ws == nil or not ws.special or ws.name ~= "special:${WS}" then return end
+  agent_switcher_auth_addr = w.address
+  hl.timer(function()
+    pcall(function()
+      local dest = agent_switcher_desktop(w)
+      hl.dispatch(hl.dsp.window.move({ workspace = dest, follow = true, window = w }))
+      local special = hl.get_active_special_workspace()
+      if special and (special.name == "special:${WS}" or special.name == "${WS}") then
+        hl.dispatch(hl.dsp.workspace.toggle_special("${WS}"))
+      end
+      hl.dispatch(hl.dsp.focus({ window = w }))
+    end)
+  end, { timeout = 50, type = "oneshot" })
+end)
+agent_switcher_auth_close = hl.on("window.close", function(w)
+  if w == nil or w.address ~= agent_switcher_auth_addr then return end
+  agent_switcher_auth_addr = nil
+  hl.timer(function()
+    hl.exec_cmd("${SELF} show")
+  end, { timeout = 80, type = "oneshot" })
+end)
 LUA
   } > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
   echo "wrote $RULES"
