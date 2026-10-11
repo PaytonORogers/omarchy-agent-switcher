@@ -64,6 +64,7 @@ PRs adding agents are welcome. It's one line.
 ## Config: `~/.config/omarchy-agent-switcher/agents.conf`
 ```ini
 toggle_key = SUPER + A
+open_on = last                      # toggle opens: last | first | <agent name or class> (missing agent -> first)
 prev_key   = SUPER + ALT + LEFT     # only bound while the panel is open
 next_key   = SUPER + ALT + RIGHT
 accent     =                        # empty = theme accent; e.g. #9B7BD4

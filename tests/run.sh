@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # variables are read inside check's eval
 # Unit tests for bin/omarchy-agents against a fake hyprctl/omarchy-shell (tests/stubs).
 # Usage: tests/run.sh        (needs bash, jq, flock; luac optional for Lua syntax checks)
 set -u
@@ -274,6 +275,21 @@ $OA usage --force; sleep 0.5; check "--force refreshes" "[[ \$(wc -l < $FAKE/col
 check "collector output never logged" "! grep -q TOKEN-LEAK $XDG_STATE_HOME/omarchy-agent-switcher/log"
 echo "usage_display = off" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 check "usage_display=off -> no usage" "[[ \$($OA usage --print) == '{}' ]]"
+
+echo "== open_on"
+for case in "last:B:0xb1" "first:B:0xa1" "C:A:0xc1" "class.c:A:0xc1" "Nope:B:0xa1"; do
+  IFS=: read -r oo lst want <<<"$case"
+  setup_world; clients "class.a:0xa1:-833" "class.b:0xb1:1320" "class.c:0xc1:1320"; echo "$lst" > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+  echo "open_on = $oo" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA toggle
+  check "open_on=$oo (last=$lst) opens $want" "evals | grep -q \"focus({ window = 'address:$want' })\""
+done
+check "missing open_on agent logged" "grep -q \"open_on 'Nope'\" $XDG_STATE_HOME/omarchy-agent-switcher/log"
+monitors 1; : > "$FAKE/calls"; $OA direct class.b >/dev/null 2>&1
+check "direct keys unaffected by open_on" "evals | grep -q \"address:0xb1', x = 243\""
+setup_world; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
+printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+script -qc "printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup" /dev/null >/dev/null 2>&1 || printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup >/dev/null 2>&1
+check "wizard writes open_on" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
 
 echo "== install / uninstall with --with-nautilus (stubs)"
 setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"

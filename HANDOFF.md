@@ -21,6 +21,7 @@ Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 vali
 - send / send-shot / send-files (`send_text`, `send_shot`, `send_files`, `paste_into`, `kind_of` in bin/omarchy-agents). Keystroke: wtype → ydotool → `hyprctl dispatch sendshortcut` (unverified under the Lua config). Chromium extension was dropped at Payton's request; selected text goes only via `send_key`.
 - Nautilus: integrations/nautilus/omarchy-agent-switcher.py (`--with-nautilus`). Written against the standard nautilus-python MenuProvider API, NOT checked against /usr/share/omarchy/default/nautilus-python (not on the box).
 - Usage meter: vendored collectors in share/collectors (auxxed MIT), `usage_json`/`usage_refresh`/`provider_of`; QML fill + hover %. Records read from ~/.local/state/omarchy/agents/usage/*.json (percent 0..1).
+- `open_on` (`open_on_idx`): toggle target when hidden; setup wizard asks (default last).
 - Laptop checks: paste lands in Grok Bot (Ctrl+V) and in TUI agents (Ctrl+Shift+V); image paste into Grok Bot; slurp cancel; Nautilus menu shows and sends; usage fill shows real numbers for grok/grok-bot/claude/codex; tokens absent from ~/.local/state/omarchy-agent-switcher/log; whether `omarchy-capture-region` exists/accepts a path.
 
 ## Test env

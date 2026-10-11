@@ -1,6 +1,7 @@
 # omarchy-agent-switcher config. Run `omarchy-agents rules` (or `setup`) after editing.
 # ---- settings (all optional) ----
 toggle_key = SUPER + A
+open_on = last              # what the toggle opens: last | first | <agent name or class>
 # accent = #9B7BD4          # strip + border colour; empty = active Omarchy theme accent
 # accent_inactive = #5E4A85 # unfocused border; empty = theme selection colour
 width = auto                # auto | 0.62 | 62% | 1200px (logical px of the focused monitor)

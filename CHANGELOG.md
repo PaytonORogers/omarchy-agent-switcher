@@ -2,6 +2,7 @@
 
 ## 1.2.0 — 2026-10
 ### Added
+- `open_on = last|first|<agent>` chooses what the toggle opens (asked in the setup wizard; direct keys unaffected).
 - Send to agent: `send` (selection/clipboard, or `--text`), `send-shot` (region capture → image for GUI agents, path for terminal agents), `send-files` (uri-list / image data / quoted paths); optional `send_key` / `shot_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
 - Usage meter on tabs (fill/percent/off, warn/crit thresholds, lazy cached refresh) using Omarchy's usage records plus collectors vendored from auxxed/omarchy-agents (MIT). Optional provider field in agents.conf.
 
