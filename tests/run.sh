@@ -139,6 +139,65 @@ H=$XDG_CONFIG_HOME/hypr/hyprland.lua; printf 'line1\n-- omarchy-agent-switcher (
 mkdir -p "$T/repo"; cp -r "$ROOT/plugin" "$ROOT/uninstall.sh" "$T/repo/"; bash "$T/repo/uninstall.sh" >/dev/null 2>&1
 check "only the marker line removed when require line is missing" "[[ \$(cat $H) == \$'line1\nline-after-marker\nlast-line' ]]"
 
+echo "== default sizing on different monitors"
+mon() { # mon <w> <h> <scale> <transform> <reserved l,t,r,b>
+  echo "[{\"name\":\"M\",\"x\":0,\"y\":0,\"width\":$1,\"height\":$2,\"scale\":$3,\"transform\":$4,\"reserved\":[$5],\"focused\":true,\"specialWorkspace\":{\"name\":\"\"}}]" > "$FAKE/monitors.json"; }
+geo() { $OA geometry; }
+setup_world; sed -i '/^width\|^height\|^top/d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+mon 1366 768 1 0 "0,26,0,0"; g=$(geo); echo "     1366x768:   $g"
+check "1366x768: near-full width (>=1200), below bar" "[[ \$g =~ panel=([0-9]+)x([0-9]+)\+[0-9]+\+([0-9]+) ]] && (( BASH_REMATCH[1] >= 1200 && BASH_REMATCH[3] >= 26 ))"
+check "1366x768: panel + strip fit in height" "[[ \$g =~ strip_top=([0-9]+) ]] && (( BASH_REMATCH[1] + 44 <= 768 ))"
+mon 2560 1440 1.25 0 "0,26,0,0"; g=$(geo); echo "     2560x1440@1.25: $g"
+check "2560x1440@1.25: logical 2048 wide, ~62% (1270)" "[[ \$g =~ area=2048x1126 && \$g =~ panel=12[0-9][0-9]x ]]"
+mon 1920 1080 1 0 "0,0,0,0"; g=$(geo); echo "     1920x1080:  $g"
+check "1920x1080: 62% = 1190, centered" "[[ \$g =~ panel=1190x[0-9]+\+365\+ ]]"
+mon 3440 1440 1 0 "0,26,0,0"; g=$(geo); echo "     3440x1440:  $g"
+check "3440x1440 ultrawide: narrower % (<=1600, <50%)" "[[ \$g =~ panel=([0-9]+)x ]] && (( BASH_REMATCH[1] <= 1600 && BASH_REMATCH[1] < 1720 ))"
+mon 1080 1920 1 0 "0,26,0,0"; g=$(geo); echo "     1080x1920:  $g"
+check "1080x1920 portrait: near-full width" "[[ \$g =~ panel=([0-9]+)x ]] && (( BASH_REMATCH[1] >= 1000 && BASH_REMATCH[1] <= 1056 ))"
+mon 1920 1080 1 1 "0,0,0,0"; g=$(geo); echo "     1920x1080 rotated: $g"
+check "rotation swaps width/height" "[[ \$g =~ area=1080x1920 ]]"
+echo "max_width = 900px" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; mon 3440 1440 1 0 "0,0,0,0"
+check "max_width clamp" "[[ \$(geo) =~ panel=900x ]]"
+sed -i '/^max_width/d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; echo "width = 1000px" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "width in px" "[[ \$(geo) =~ panel=1000x ]]"
+sed -i 's/^width = 1000px/width = 50%/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "width in %" "[[ \$(geo) =~ panel=1720x ]] || [[ \$(geo) =~ panel=1600x ]]"
+setup_world; monitors 0 2; sed -i '/^width\|^height\|^top/d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "multi-monitor: uses focused monitor only" "[[ \$(geo) =~ monitor=eDP-1\ area=1280x720 ]]"
+
+echo "== per-agent sizes"
+setup_world; monitors 1; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+clients "class.a:0xa1:243" "class.b:0xb1:1320" "class.c:0xc1:1320"
+sed -i 's/"size":\[793,590\],"at":\[243/"size":[1000,500],"at":[243/' "$FAKE/clients.json"   # user resized A
+: > "$FAKE/calls"; $OA show B
+check "resized agent size saved per monitor" "[[ \$(cat $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1) == '1000 500' ]]"
+check "outgoing parks using its own (resized) width" "evals | grep -q \"address:0xa1', x = -1040\""
+clients "class.a:0xa1:-1040" "class.b:0xb1:243" "class.c:0xc1:1320"; sed -i 's/"size":\[793,590\],"at":\[-1040/"size":[1000,500],"at":[-1040/' "$FAKE/clients.json"
+: > "$FAKE/calls"; $OA show A
+check "resized agent re-centred in slot ((1280-1000)/2=140)" "evals | grep -q \"address:0xa1', x = 140\""
+check "resized agent keeps its size (no resize back)" "! evals | grep -q \"address:0xa1', x = 793\""
+check "strip anchors under the active agent's height" "grep summon $FAKE/shell | tail -1 | grep -q '\"top\":553'"
+$OA reset-size A >/dev/null; check "reset-size forgets it" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
+
+echo "== shortcuts cheat sheet"
+setup_world; monitors 0; clients "class.a:0xa1:243"
+echo '[{"modmask":64,"key":"minus","submap":"","dispatcher":"resizeactive","arg":"-100 0","description":"Shrink window width"},{"modmask":64,"key":"mouse:273","submap":"","dispatcher":"resizewindow","arg":"","description":"Resize window with mouse"}]' > "$FAKE/binds.json"
+echo "shortcuts_key = SUPER + SLASH" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+$OA rules >/dev/null 2>&1
+check "optional global shortcuts bind generated" "grep -q 'SUPER + SLASH\", \"Agent switcher shortcuts\"' $R"
+$OA shortcuts; sleep 0.5; P=$(grep summon "$FAKE/shell" | tail -1)
+check "shortcuts opens panel with sheet:true" "[[ \$P == *'\"sheet\":true'* ]] && evals | grep -q toggle_special"
+check "sheet lists toggle key" "[[ \$P == *'Super+A'*'Open / close'* ]]"
+check "sheet lists per-agent direct key" "[[ \$P == *'Super+Shift+A'*'A (open / switch / close)'* ]]"
+check "sheet lists cycle keys" "[[ \$P == *'Previous agent'* && \$P == *'Next agent'* ]]"
+check "sheet lists live resize binds (not mouse)" "[[ \$P == *'Super+minus'*'Shrink window width'* && \$P != *'with mouse'* ]]"
+check "sheet lists reset-size + click actions" "[[ \$P == *'reset-size'* && \$P == *'Right-click tab'* ]]"
+check "missing agent's key not in sheet" "[[ \$P != *'Super+Alt+M'* ]]"
+monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "normal updates close the sheet" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":false'"
+echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "show_hint=false hides the ? affordance (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
+
 echo
 echo "passed: $PASS  failed: $FAILN"
 (( FAILN == 0 ))

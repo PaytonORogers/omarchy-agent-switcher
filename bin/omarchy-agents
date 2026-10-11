@@ -7,6 +7,8 @@
 #   omarchy-agents next|prev         cycle agents (tab order)
 #   omarchy-agents direct <class> [--start-hidden]   per-agent shortcut
 #   omarchy-agents close|restart <name>              manage an agent window
+#   omarchy-agents reset-size [name|all]             forget sizes saved from resizing
+#   omarchy-agents shortcuts                         show the cheat sheet
 #   omarchy-agents hide | autohide | list | rules [--reload] | setup [--yes] | doctor | hint on|off|toggle | version
 set -u
 VERSION=1.1.0
@@ -37,9 +39,9 @@ is_addr() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
 find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 
 # ---------- config ----------------------------------------------------------
-declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=0.62 [height]=0.82
-  [top]=0.06 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true )
+declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
+  [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" )
 names=(); classes=(); cmds=(); keys=(); icons=(); all_names=(); conf_warnings=()
 # Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
 program_of() {
@@ -80,7 +82,7 @@ load_conf() {
       S[$key]=$v
     fi
   done < "$CONF"
-  local kk; for kk in toggle_key prev_key next_key; do valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
+  local kk; for kk in toggle_key prev_key next_key shortcuts_key; do valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
   [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
   return 0
 }
@@ -111,6 +113,7 @@ gen_rules() {
     fi
     echo "local function ab(key, desc, cmd) pcall(hl.unbind, key); o.bind(key, desc, cmd) end"
     [[ -n ${S[toggle_key]} ]] && echo "ab(\"$(lq "${S[toggle_key]}")\", \"Agent switcher\", \"$(lq "$SELF") toggle\")"
+    [[ -n ${S[shortcuts_key]} ]] && echo "ab(\"$(lq "${S[shortcuts_key]}")\", \"Agent switcher shortcuts\", \"$(lq "$SELF") shortcuts\")"
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"$(lq "${keys[$i]}")\", \"$(lq "${names[$i]}") (agent switcher)\", \"$(lq "$SELF") direct ${classes[$i]}\")"; done
     local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
     [[ -n $sh ]] && echo "o.launch_on_start(\"$(lq "$SELF") direct $sh --start-hidden\")"
@@ -239,21 +242,74 @@ runtime_init() {
     ($m[0] | first(.[]|select(.focused))) as $f
     | ($f | lw) as $wh
     | ([$m[0][] | . as $x | ($x|lw) as $w2 | [$x.x, $x.x + ($w2[0]/$x.scale|floor)]]) as $b
-    | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end) \([$b[][0]]|min) \([$b[][1]]|max)",
+    | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end) \([$b[][0]]|min) \([$b[][1]]|max) \(($f.reserved // [0,0,0,0]) | map(floor) | join(" "))",
       ($cls[] as $k | first($c[0][] | select(.class==$k)) // null | if . then "\(.class) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
   rm -f "$tmp".*
-  read -r MON MX MY MW MH VIS DX0 DX1 <<<"$(head -1 <<<"$out")"
+  read -r MON MX MY MW MH VIS DX0 DX1 RL RT RR RB <<<"$(head -1 <<<"$out")"
   is_int "${MW:-x}" && is_int "${MH:-x}" && is_int "${MX:-x}" && is_int "${MY:-x}" || die "could not read monitor geometry from hyprctl"
   is_int "${DX0:-x}" || DX0=$MX; is_int "${DX1:-x}" || DX1=$((MX+MW))
-  declare -gA ADDR=() WSN=() WW=() WH=() WX=()
+  declare -gA ADDR=() WSN=() WW=() WH=() WX=() TW=() TH=()
   local c a w x y z; while read -r c a w x y z; do
     [[ -n $c ]] && is_addr "$a" || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z
   done <<<"$(tail -n +2 <<<"$out")"
-  local fw ft fh; read -r fw ft fh < <(awk -v a="$(num "${S[width]}" 0.62)" -v b="$(num "${S[top]}" 0.06)" -v c="$(num "${S[height]}" 0.82)" 'BEGIN{printf "%d %d %d", a*100+.5, b*100+.5, c*100+.5}')
-  SX=$(( MX + MW * (100 - fw) / 200 )); SY=$(( MY + MH * ft / 100 ))
-  PW=$(( MW * fw / 100 )); PH=$(( MH * fh / 100 ))
+  for v in RL RT RR RB; do is_int "${!v:-x}" || printf -v "$v" 0; done
+  geometry
+  local i; for i in "${!names[@]}"; do size_for "$i"; done
+  capture_user_size
   read -r OA OI <<<"${S[opacity]}"; [[ $OA =~ ^[0-9.]+$ ]] || OA=0.82; [[ ${OI:-} =~ ^[0-9.]+$ ]] || OI=$OA
   LUA=""
+}
+# ---------- geometry --------------------------------------------------------
+# Usable area = focused monitor in logical px (scale + rotation applied) minus
+# reserved space (bars). Default panel: ~62% wide on 16:9, narrower on ultrawide,
+# near-full on small/portrait screens, clamped to min_width..max_width; height
+# fills the area below the top gap, leaving room for the strip under it.
+geometry() {
+  AW=$(( MW - RL - RR )); AH=$(( MH - RT - RB )); OX=$(( MX + RL )); OY=$(( MY + RT ))
+  STRIPH=$(( 44 + 10 + 12 ))   # strip + gaps (the shortcuts sheet opens above the strip)
+  read -r PW PH GAP < <(awk -v aw="$AW" -v ah="$AH" -v w="${S[width]}" -v h="${S[height]}" -v t="${S[top]}" \
+      -v mx="${S[max_width]%px}" -v mn="${S[min_width]%px}" -v sh="$STRIPH" '
+    function spec(v, total, auto) { if (v ~ /px$/) return v+0; if (v ~ /%$/) return total*(v+0)/100; if (v ~ /^[0-9.]+$/ && v+0 > 0) return (v+0 <= 1 ? total*v : v+0); return auto }
+    BEGIN {
+      r = aw/ah; fw = (aw < 1100 || r < 1) ? 0.94 : (aw < 1500 ? 0.88 : (r > 2.1 ? 0.45 : (r > 1.7 ? 0.62 : 0.70)))
+      if (mx !~ /^[0-9]+$/) mx = 1600; if (mn !~ /^[0-9]+$/) mn = 640; if (mn > mx) mn = mx
+      g = spec(t, ah, -1); if (g < 0) g = ah*0.03; if (g < 12) g = 12
+      W = spec(w, aw, aw*fw); if (W > mx) W = mx; if (W < mn) W = mn; if (W > aw - 24) W = aw - 24
+      H = spec(h, ah, ah - g - sh); if (H > ah - g - sh) H = ah - g - sh; if (H < 200) H = 200
+      printf "%d %d %d", W, H, g }')
+  SY=$(( OY + GAP ))
+  mkdir -p "$STATE/size"
+}
+size_file() { echo "$STATE/size/${classes[$1]}@$MON"; }
+size_for() { # per-agent size: saved (from user resizing) for this monitor, else the default; clamped to the area
+  local i=$1 c=${classes[$1]} w=$PW h=$PH f; f=$(size_file "$i")
+  [[ -f $f ]] && read -r w h < "$f"
+  is_int "$w" && is_int "$h" || { w=$PW; h=$PH; }
+  (( w > AW - 24 )) && w=$(( AW - 24 )); (( w < 320 )) && w=320
+  (( h > AH - GAP - STRIPH )) && h=$(( AH - GAP - STRIPH )); (( h < 200 )) && h=200
+  TW[$c]=$w; TH[$c]=$h
+}
+slot_x() { echo $(( OX + (AW - TW[${classes[$1]}]) / 2 )); }
+# If the visible agent's size differs from what we gave it, the user resized it
+# (Omarchy's resize binds work on floating windows): remember it per agent+monitor.
+capture_user_size() {
+  visible || return 0
+  local i c; i=$(idx_of "$last"); [[ -n $i ]] || return 0; c=${classes[$i]}
+  [[ -n ${ADDR[$c]:-} && ${WSN[$c]} == "special:$WS" ]] || return 0
+  [[ -f $STATE/launch.$c ]] && return 0
+  local w=${WW[$c]:-0} h=${WH[$c]:-0}
+  (( w >= 320 && h >= 200 )) || return 0
+  local dw=$(( w - TW[$c] )) dh=$(( h - TH[$c] ))
+  (( ${dw#-} > 2 || ${dh#-} > 2 )) || return 0
+  echo "$w $h" > "$(size_file "$i")"; log "saved size ${names[$i]}@$MON: ${w}x$h"
+  size_for "$i"
+}
+reset_size() {
+  local i f; mkdir -p "$STATE/size"
+  if [[ -z ${1:-} || $1 == all ]]; then rm -f "$STATE/size/"*; echo "reset sizes for all agents"
+  else i=$(need_idx "$1") || exit 1; rm -f "$STATE/size/${classes[$i]}@"*; echo "reset size for ${names[$i]}"; fi
+  if visible; then for i in "${!names[@]}"; do size_for "$i"; done; i=$(idx_of "$last"); [[ -n $i ]] || return 0
+    local a; a=$(addr_of "$i"); [[ -n $a ]] && { ensure "$i"; move "$a" "$(slot_x "$i")"; flush; strip_show "$i"; }; fi
 }
 q() { LUA+="pcall(function() hl.dispatch($1) end) "; }     # queue a dispatcher
 flush() {
@@ -270,7 +326,7 @@ move() { is_addr "$1" && is_int "$2" && q "hl.dsp.window.move({ window = 'addres
 teleport() { prop "$1" no_anim 1; move "$1" "$2"; prop "$1" no_anim 0; }
 left_of()  { echo $(( DX0 - $1 - 40 )); }   # outside the whole desktop, so neighbouring monitors never show it
 right_of() { echo $(( DX1 + 40 )); }
-park_x() { local c=${classes[$1]}; if (( $1 < $2 )); then left_of "${WW[$c]:-$PW}"; else right_of; fi; }
+park_x() { local c=${classes[$1]}; if (( $1 < $2 )); then left_of "${TW[$c]:-$PW}"; else right_of; fi; }
 keep_cursor() { [[ -n $CURSOR ]] && q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; return 0; }   # hl.dsp.focus warps the pointer
 resolve_cmd() { # absolute path for the program word only; the rest of the line is kept verbatim
   local pi x idx line=$1; pi=$(program_of "$line") || { echo "$line"; return; }
@@ -289,7 +345,8 @@ launch() { # launch <idx> in the background (never blocks); window rules put it 
   ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "${cmds[$i]}")" ) >>"$STATE/log" 2>&1 9>&- &
 }
 await_window() { # background: when agent <idx> maps, focus + dim it if still the active tab; report failures
-  local i=$1 c=${classes[$1]} n=${names[$1]} dim=${S[dim]}
+  local i=$1 c=${classes[$1]} n=${names[$1]} dim=${S[dim]} gx gy gw gh
+  gx=$(slot_x "$i"); gy=$SY; gw=${TW[${classes[$1]}]}; gh=${TH[${classes[$1]}]}
   ( a=""; for _ in $(seq $((LAUNCH_TIMEOUT * 3))); do
       a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c))|.address // empty'); [[ -n $a ]] && break; sleep 0.33; done
     rm -f "$STATE/launch.$c"
@@ -298,7 +355,9 @@ await_window() { # background: when agent <idx> maps, focus + dim it if still th
       timeout 2 omarchy-shell -q agentswitcher refresh >/dev/null 2>&1; exit 0; fi
     is_addr "$a" || exit 0
     [[ $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
-    p=$(hyprctl cursorpos); l="pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) "
+    p=$(hyprctl cursorpos)
+    l="pcall(function() hl.dispatch(hl.dsp.window.resize({ window = 'address:$a', x = $gw, y = $gh })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ window = 'address:$a', x = $gx, y = $gy })) end) "
+    l+="pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) "
     [[ $p =~ ^-?[0-9]+,\ -?[0-9]+$ ]] && l+="pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) end) "
     [[ $dim == true ]] && l+="pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) end) "
     hyprctl eval "$l" >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
@@ -308,11 +367,32 @@ ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in ba
   a=${ADDR[$c]:-}
   [[ -z $a ]] && { launch "$i"; return 2; }
   [[ ${WSN[$c]} != "special:$WS" ]] && { q "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"; WSN[$c]=special:$WS; }
-  if (( ${WW[$c]:-0} != PW || ${WH[$c]:-0} != PH )); then q "hl.dsp.window.resize({ window = 'address:$a', x = $PW, y = $PH })"; WW[$c]=$PW; WH[$c]=$PH; fi
+  if (( ${WW[$c]:-0} != TW[$c] || ${WH[$c]:-0} != TH[$c] )); then q "hl.dsp.window.resize({ window = 'address:$a', x = ${TW[$c]}, y = ${TH[$c]} })"; WW[$c]=${TW[$c]}; WH[$c]=${TH[$c]}; fi
   return 0
 }
 dim_on() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; return 0; }
 show_hint() { local v=${S[show_hint]:-true}; [[ $v == true || $v == on || $v == 1 ]]; }
+pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; echo "$k"; }
+resize_binds() { # Omarchy's (or the user's) resizeactive binds, as "keys<TAB>action"
+  hyprctl binds -j 2>/dev/null | jq -r '
+    def mods: [ (if (.modmask/64|floor)%2==1 then "Super" else empty end), (if (.modmask/4|floor)%2==1 then "Ctrl" else empty end),
+                (if (.modmask/8|floor)%2==1 then "Alt" else empty end), (if .modmask%2==1 then "Shift" else empty end) ];
+    .[] | select(.submap=="" and ((.dispatcher // "") | test("resize"; "i")) and ((.description // "") | test("mouse"; "i") | not))
+    | "\((mods + [.key]) | join("+"))\t\(.description // ("resize " + (.arg // "")))"' 2>/dev/null | head -8
+}
+shortcuts_json() { # every switcher key, generated from the live config
+  local -a l=(); local i r
+  [[ -n ${S[toggle_key]} ]] && l+=("$(pretty "${S[toggle_key]}")" "Open / close the drop-down")
+  for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && l+=("$(pretty "${keys[$i]}")" "${names[$i]} (open / switch / close)"); done
+  [[ -n ${S[prev_key]} ]] && l+=("$(pretty "${S[prev_key]}")" "Previous agent (while open)")
+  [[ -n ${S[next_key]} ]] && l+=("$(pretty "${S[next_key]}")" "Next agent (while open)")
+  [[ -n ${S[shortcuts_key]} ]] && l+=("$(pretty "${S[shortcuts_key]}")" "This cheat sheet")
+  l+=("Scroll on strip" "Switch agent" "Click tab" "Switch to agent" "Right-click tab" "Restart / Close menu" "Middle-click tab" "Close agent")
+  l+=("← → / Tab / 1-9" "Switch (strip focused)" "?" "Shortcuts (strip focused)" "Esc" "Close sheet / menu / panel")
+  while IFS=$'	' read -r i r; do [[ -n $i ]] && l+=("$i" "Resize agent: $r (size is remembered)"); done < <(resize_binds)
+  l+=("omarchy-agents reset-size" "Forget remembered agent sizes")
+  jq -cn '[$ARGS.positional | range(0; length; 2) as $j | {keys: .[$j], action: .[$j+1]}]' --args "${l[@]}"
+}
 payload() { # one jq call: tabs (name, icon, running, starting) + strip settings + sequence number
   local i ic st; local -a args=()
   for i in "${!names[@]}"; do
@@ -322,10 +402,11 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
     args+=("${names[$i]}" "$ic" "$st")
   done
   jq -cn --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
-    --argjson top "$(( SY - MY + PH + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
+    --argjson top "$(( SY - MY + TH[${classes[$1]}] + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
     --argjson hint "$(show_hint && echo true || echo false)" --argjson seq "$(date +%s%3N)" \
+    --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" \
     '[$ARGS.positional | range(0; length; 3) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2]}] as $a
-     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq}' \
+     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet}' \
     --args "${args[@]}"
 }
 # Strip updates go to the shell in the background so they never delay the slide.
@@ -338,7 +419,7 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   ensure "$i" || pending=1; a=$(addr_of "$i")
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     ensure "$j"; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
-  [[ -n $a ]] && { teleport "$a" "$SX"; dim_on "$a"; }
+  [[ -n $a ]] && { teleport "$a" "$(slot_x "$i")"; dim_on "$a"; }
   q "hl.dsp.workspace.toggle_special('$WS')"
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     teleport "$b" "$(park_x "$j" "$i")"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
@@ -354,13 +435,13 @@ switch_to() { # visible -> horizontal slide in tab order, one eval
   cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
   ensure "$i" || pending=1; a=$(addr_of "$i"); b=$(addr_of "$cur"); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
-  if (( i > cur )); then from=$(right_of); else from=$(left_of "${WW[$c]:-$PW}"); fi
+  if (( i > cur )); then from=$(right_of); else from=$(left_of "${TW[$c]}"); fi
   [[ -n $a && ${WX[$c]:-x} != "$from" ]] && teleport "$a" "$from"
   if [[ -n $b ]]; then
-    if (( i > cur )); then out=$(left_of "${WW[${classes[$cur]}]:-$PW}"); else out=$(right_of); fi
+    if (( i > cur )); then out=$(left_of "${WW[${classes[$cur]}]:-${TW[${classes[$cur]}]}}"); else out=$(right_of); fi
     prop "$b" dim_around 0; move "$b" "$out"
   fi
-  [[ -n $a ]] && { move "$a" "$SX"; dim_on "$a"; q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
+  [[ -n $a ]] && { move "$a" "$(slot_x "$i")"; dim_on "$a"; q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
   for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of "$j"); [[ -n $x ]] || continue
     [[ ${WX[${classes[$j]}]:-} != "$(park_x "$j" "$i")" ]] && teleport "$x" "$(park_x "$j" "$i")"; done
   flush
@@ -413,7 +494,7 @@ case $cmd in
   hint) ( load_conf; set_hint "${2:-toggle}" ) || exit 1
         if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
           runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit 0 ;;
-  -h|--help|help) sed -n '5,10p' "$0"; exit 0 ;;
+  -h|--help|help) sed -n '5,12p' "$0"; exit 0 ;;
 esac
 runtime_init
 case $cmd in
@@ -439,6 +520,10 @@ case $cmd in
           fi
           visible && strip_show "$(idx_of "$last")" ;;
   hide)   hide_all ;;
+  reset-size) reset_size "${2:-all}" ;;
+  shortcuts) SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
+  geometry) i=$(idx_of "$last"); c=${classes[$i]}   # debug: computed layout for the focused monitor
+          echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(( SY - MY + TH[$c] + 10 ))" ;;
   autohide) # called by the strip on focus/workspace events: close if focus left the agents
           (( $(date +%s%3N) - $(cat "$STATE/acted" 2>/dev/null || echo 0) < 1000 )) && exit 0   # our own open/switch
           [[ -n $(find "$STATE" -maxdepth 1 -name 'launch.*' -newermt "-$LAUNCH_TIMEOUT seconds" 2>/dev/null) ]] && exit 0   # agent starting
@@ -448,6 +533,6 @@ case $cmd in
             # focus on a regular window, or on nothing at all (clicked empty desktop) => leave
             if [[ $aa == - || $aa == null || -z $aa ]] || [[ $awn != "special:$WS" ]]; then hide_all; fi
           fi ;;
-  *) sed -n '5,10p' "$0" >&2; exit 2 ;;
+  *) sed -n '5,12p' "$0" >&2; exit 2 ;;
 esac
 exit 0

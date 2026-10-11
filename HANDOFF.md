@@ -11,8 +11,13 @@ Skipped (needs Payton's decision / design): 31 first-run settings panel/wizard U
 
 Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 validation+Lua escaping (`lq`, `valid_class`, `valid_key`) · 4 `idx_of` no fallback, `need_idx` · 5 `pcall` per dispatch, hide restores opacity · 6 seq · 7 Process per call · 8 restore only real Omarchy default (`OMARCHY_DEFAULT_*`) · 9 README: use install.sh not `omarchy plugin add` · 10 version 1.1.0/CHANGELOG · 11 SELF=~/.local/bin copy · 12 launch timeout + notify · 13 slide_ms clamp/0=off · 14 autohide on empty focus · 15 `program_of`/`resolve_cmd` keep args · 16 unknown agent error · 17 hint w/o config · 19 registry validation in detect · 20 AGENT_PATH appended, used only for agent lookup · 21 address/int validation · 22 park outside whole desktop (DX0/DX1) · 24 `override_slide_animation` · 25 atomic staging in install · 26 preflight + `--no-restart` · 27 log + `OMARCHY_AGENTS_DEBUG` · 29 doctor deps, README min versions · 30 single jq payload · 36 THIRD_PARTY.md · 37 docs · 38 CI · 39 issue template.
 
+## Added later in v1.1 (box-tested only)
+- Sizing: `geometry()`/`size_for()`/`capture_user_size()` in bin/omarchy-agents; saved sizes in `$STATE/size/<class>@<monitor>`. A size change is detected at the next open/switch/hide (no Hyprland resize event), so the strip re-anchors then, not live.
+- Shortcuts sheet: payload `shortcuts` + `sheet`; QML `sheetBox` above the strip (window grows upward); `resize_binds()` reads `hyprctl binds -j` dispatchers matching /resize/ — **verify Omarchy's Lua binds report `dispatcher` that way**; if not, the sheet simply omits resize keys.
+- Laptop checks: sizes on the real monitor; resize with Omarchy keys → switch away/back keeps size; strip under resized agent; slide between different-size agents; `?`/button/Esc/click-away on the sheet; sheet doesn't go off the top of the screen.
+
 ## Test env
-`tests/run.sh` (needs bash, jq, flock; lua5.4 `luac` optional) — 40 checks, fake `hyprctl`/`omarchy-shell` in `tests/stubs` serve JSON from `$FAKE`, record calls in `$FAKE/calls`. Lint: `shellcheck -S warning bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*`; QML syntax: `/usr/lib/qt6/bin/qmlformat plugin/Switcher.qml >/dev/null` (qmllint can't resolve Quickshell modules → noise). CI: `.github/workflows/ci.yml`.
+`tests/run.sh` (needs bash, jq, flock; lua5.4 `luac` optional) — 67 checks, fake `hyprctl`/`omarchy-shell` in `tests/stubs` serve JSON from `$FAKE`, record calls in `$FAKE/calls`. Lint: `shellcheck -S warning bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*`; QML syntax: `/usr/lib/qt6/bin/qmlformat plugin/Switcher.qml >/dev/null` (qmllint can't resolve Quickshell modules → noise). CI: `.github/workflows/ci.yml`.
 
 ## Gotchas
 - `setsid` in `launch` doesn't fork → never `wait` for all children at script end (would block on the agent).

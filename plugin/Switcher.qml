@@ -22,6 +22,8 @@ Item {
   property bool hint: true
   property color accent: Color.accent      // overridden by `accent =` in agents.conf
   property string menuFor: ""              // agent whose right-click menu is open
+  property var shortcuts: []               // [{ keys, action }] generated from the live config
+  property bool sheet: false               // cheat-sheet overlay
 
   readonly property color fg: Color.foreground
   readonly property color bg: Color.background
@@ -41,11 +43,13 @@ Item {
       if (p.prevKey !== undefined) prevKey = p.prevKey
       if (p.nextKey !== undefined) nextKey = p.nextKey
       if (p.hint !== undefined) hint = p.hint
+      if (p.shortcuts) shortcuts = p.shortcuts
+      sheet = p.sheet === true
       opened = true
       lastShow = Date.now()
     } catch (e) {}
   }
-  function close() { opened = false; menuFor = "" }
+  function close() { opened = false; menuFor = ""; sheet = false }
   // One process per call, so quick clicks/scrolls are never dropped.
   Component { id: runner; Process { onExited: destroy() } }
   function run(args) { var p = runner.createObject(root, { command: [root.bin].concat(args) }); p.running = true }
@@ -55,11 +59,6 @@ Item {
     return s.length ? s[0] : null
   }
   function prettyKey(k) { return (k || "").replace(/\s*\+\s*/g, "+").replace("SUPER", "Super").replace("SHIFT", "Shift").replace("ALT", "Alt").replace("CTRL", "Ctrl").replace("LEFT", "←").replace("RIGHT", "→") }
-  function hintText() {
-    var t = prettyKey(toggleKey) + " toggle"
-    if (prevKey && nextKey) t += " · " + prettyKey(prevKey) + " / " + prettyKey(nextKey).replace(/.*\+/, "") + " switch"
-    return t + " · scroll · right-click: menu"
-  }
 
   // Auto-hide: when focus leaves special:agents (link opened a browser, user
   // clicked another app or workspace) the script hides panel + strip together.
@@ -73,6 +72,7 @@ Item {
       var n = String(event.name)
       if (n !== "activewindowv2" && n !== "activespecial" && n !== "workspace" && n !== "workspacev2" && n !== "focusedmon" && n !== "openwindow" && n !== "closewindow") return
       if (Date.now() - root.lastShow < 400) return
+      root.sheet = false   // click-away / focus change closes the cheat sheet
       autohideTimer.restart()
     }
   }
@@ -84,7 +84,8 @@ Item {
     function refresh(): string { if (root.opened) root.run(["show", root.active]); return "ok" }
     function state(): string { return root.opened ? "open:" + root.active : "closed" }
     function ping(): string { return "ok" }
-    function metrics(): string { return "window=" + win.implicitWidth + " strip=" + strip.width + " hint=" + Math.ceil(hintLabel.implicitWidth) + " hintVisible=" + root.hint }
+    function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
+    function shortcuts(): string { if (!root.opened) return "closed"; root.sheet = !root.sheet; return root.sheet ? "shown" : "hidden" }
   }
 
   // Touchpads send many small wheel steps: switch once per full notch, at most every 150 ms.
@@ -101,9 +102,10 @@ Item {
     visible: root.opened
     screen: root.screenFor(root.monitorName)
     anchors { top: true }
-    margins.top: root.stripTop
-    implicitWidth: Math.max(strip.width, root.hint ? hintLabel.implicitWidth + 24 : 0, menu.visible ? menu.width + 16 : 0)
-    implicitHeight: 44 + (root.hint || menu.visible ? 20 : 0)
+    // The cheat sheet sits above the strip, so the window grows upward.
+    margins.top: Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
+    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
+    implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + (menu.visible ? 20 : 0)
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchy-agent-switcher"
@@ -112,7 +114,42 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
     Rectangle {
+      id: sheetBox
+      visible: root.sheet
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: grid.implicitWidth + 28
+      height: grid.implicitHeight + sheetTitle.implicitHeight + 30
+      radius: 14
+      color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.94)
+      border.width: 2
+      border.color: root.accent
+      Accessible.role: Accessible.Dialog
+      Accessible.name: "Agent switcher shortcuts"
+      MouseArea { anchors.fill: parent; onClicked: root.sheet = false }
+      Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
+      Grid {
+        id: grid
+        x: 14; anchors.top: sheetTitle.bottom; anchors.topMargin: 8
+        columns: 2; columnSpacing: 18; rowSpacing: 4
+        Repeater {
+          model: root.shortcuts.length * 2
+          Text {
+            required property int index
+            readonly property var e: root.shortcuts[Math.floor(index / 2)]
+            text: index % 2 === 0 ? e.keys : e.action
+            color: index % 2 === 0 ? root.fg : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.7)
+            font.family: Style.font.family; font.pixelSize: 11
+            font.weight: index % 2 === 0 ? Font.DemiBold : Font.Normal
+          }
+        }
+      }
+    }
+
+    Rectangle {
       id: strip
+      anchors.top: sheetBox.visible ? sheetBox.bottom : parent.top
+      anchors.topMargin: sheetBox.visible ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: row.implicitWidth + 16
       height: 44
@@ -128,8 +165,8 @@ Item {
       Keys.onRightPressed: root.run(["next"])
       Keys.onTabPressed: root.run(["next"])
       Keys.onBacktabPressed: root.run(["prev"])
-      Keys.onEscapePressed: { if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
-      Keys.onPressed: (e) => { if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
+      Keys.onEscapePressed: { if (root.sheet) root.sheet = false; else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
+      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.sheet = !root.sheet; e.accepted = true } else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
 
       WheelHandler { onWheel: (e) => root.wheel(e.angleDelta.y) }
 
@@ -193,6 +230,18 @@ Item {
             }
           }
         }
+        // Compact shortcuts affordance (show_hint controls it).
+        Rectangle {
+          visible: root.hint
+          width: qlbl.implicitWidth + 16; height: 24; radius: 12
+          anchors.verticalCenter: parent.verticalCenter
+          color: (qma.containsMouse || root.sheet) ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.3) : "transparent"
+          border.width: 1; border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
+          Accessible.role: Accessible.Button
+          Accessible.name: "Show shortcuts"
+          Text { id: qlbl; anchors.centerIn: parent; text: "? shortcuts"; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.7); font.family: Style.font.family; font.pixelSize: 10 }
+          MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; onClicked: { strip.forceActiveFocus(); root.sheet = !root.sheet } }
+        }
       }
     }
 
@@ -219,16 +268,5 @@ Item {
       }
     }
 
-    Text {
-      id: hintLabel
-      visible: root.hint && !menu.visible
-      anchors.top: strip.bottom
-      anchors.topMargin: 3
-      anchors.horizontalCenter: strip.horizontalCenter
-      text: root.hintText()
-      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.55)
-      font.family: Style.font.family
-      font.pixelSize: 10
-    }
   }
 }

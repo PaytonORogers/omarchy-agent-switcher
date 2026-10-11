@@ -8,7 +8,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
-- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a small keyboard hint. Click a tab, scroll over the strip, or click it and use ← → / Tab / 1-9 / Esc. Right-click a tab for Restart / Close; middle-click closes. Tabs show whether an agent is running, starting (…) or not started yet.
+- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a compact **? shortcuts** button that opens a cheat sheet of every switcher key, built from your config. Click a tab, scroll over the strip, or click it and use ← → / Tab / 1-9 / Esc. Right-click a tab for Restart / Close; middle-click closes. Tabs show whether an agent is running, starting (…) or not started yet.
 - **Directional switching.** Picking a tab to the right brings that agent in from the right while the old one leaves left, and the reverse for tabs on the left. The slide is ~250 ms and only applies to switches; your other window animations aren't touched.
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
@@ -59,15 +59,17 @@ prev_key   = SUPER + ALT + LEFT     # only bound while the panel is open
 next_key   = SUPER + ALT + RIGHT
 accent     =                        # empty = theme accent; e.g. #9B7BD4
 accent_inactive =                   # empty = theme selection colour
-width = 0.62                        # fractions of the focused monitor
-height = 0.82
-top = 0.06
+width = auto                        # auto | 0.62 | 62% | 1200px  (auto: ~62% on 16:9, ~88% on small, ~45% ultrawide, ~94% portrait)
+height = auto                       # auto fills the screen below the bar, leaving room for the strip
+top = auto                          # gap above the panel: auto | fraction | px
+max_width = 1600                    # logical px clamp for width (min_width = 640)
 slide_ms = 250                      # agent-switch slide; 0 = no slide
 override_slide_animation = true     # false = keep your own windowsMove animation
 opacity = 0.82 0.75
 rounding = 14
 dim = true
-show_hint = true                    # keyboard hint under the strip
+show_hint = true                    # "? shortcuts" button on the strip
+shortcuts_key =                     # optional global bind for the cheat sheet, e.g. SUPER + SLASH
 start_hidden = grok-bot             # optional: launch this class hidden at login
 
 # name | window class | launch command | direct key (optional) | icon (optional)
@@ -84,6 +86,12 @@ After editing, run `omarchy-agents rules` to regenerate the Hyprland include and
 
 **Terminal agents:** use an absolute path or `$HOME/...` for the binary. Apps launched through uwsm don't see your shell's PATH.
 
+## Sizing
+Sizes are computed from the focused monitor's logical size (scale and rotation applied) minus reserved space such as the top bar.
+**Resize any agent with Omarchy's normal resize keys** while it's showing; the switcher remembers that agent's size per monitor,
+keeps it centred, and anchors the strip under it. `omarchy-agents reset-size [name|all]` forgets saved sizes.
+`omarchy-agents geometry` prints the computed layout.
+
 ## Keybinds (defaults)
 | Keys | Action |
 |---|---|
@@ -91,14 +99,15 @@ After editing, run `omarchy-agents rules` to regenerate the Hyprland include and
 | Super+Alt+← / → | previous / next agent (only while open) |
 | per-agent `direct key` | open that agent, switch to it, or close it if it's already showing |
 | scroll on strip, or click it then ← → Tab 1-9 Esc | switch / close |
+| `?` on the focused strip, the **? shortcuts** button, or `omarchy-agents shortcuts` | cheat sheet (Esc or click away closes) |
 
 The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only while the panel is open, and
 are restored on close (only if the Omarchy default was really there). If you pick keys that already do something else, `omarchy-agents rules` warns you.
 
 ## CLI
-`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
+`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
 
-`omarchy-agents hint off` hides the keyboard hint right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
+`omarchy-agents hint off` hides the "? shortcuts" button right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
 ## Troubleshooting
 - **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonorogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.

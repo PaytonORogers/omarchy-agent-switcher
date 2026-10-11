@@ -18,6 +18,9 @@
 - Extra agent search paths no longer shadow system tools.
 - Inactive agents park outside the whole desktop (no peeking onto neighbouring monitors).
 ### Added
+- Smart default sizing from the focused monitor's logical size minus reserved bar space, with rotation support and `min_width`/`max_width` clamps; `width`/`height`/`top` accept `auto`, fractions, `%` or `px`.
+- Per-agent sizes: resize an agent with Omarchy's resize keys and it's remembered per monitor, centred, with the strip re-anchored; parking uses each agent's own width. `reset-size [name|all]`, `geometry`.
+- "? shortcuts" button replaces the hint line: a themed cheat sheet (from the live config, including your resize binds) via `?`, click, `omarchy-agents shortcuts` or optional `shortcuts_key`.
 - Theme-change hook regenerates border colours.
 - `override_slide_animation = false` keeps your own `windowsMove` animation.
 - `install.sh` preflight checks, atomic file swaps, `--no-restart`.
