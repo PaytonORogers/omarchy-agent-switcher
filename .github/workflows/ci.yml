@@ -1,0 +1,18 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq lua5.4 qt6-declarative-dev-tools
+      - name: shellcheck
+        run: shellcheck -S warning bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*
+      - name: QML syntax
+        run: /usr/lib/qt6/bin/qmlformat plugin/Switcher.qml > /dev/null
+      - name: manifest
+        run: jq -e '.id and .version and .entryPoints.panel' plugin/manifest.json
+      - name: version consistency
+        run: test "$(jq -r .version plugin/manifest.json)" = "$(sed -n 's/^VERSION=//p' bin/omarchy-agents)"
+      - name: unit tests
+        run: tests/run.sh

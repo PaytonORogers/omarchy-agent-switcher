@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+[[ ${1:-} == -q ]] && shift
+printf '%s\n' "$*" >> "$FAKE/shell"
+[[ ${2:-} == ping ]] && echo ok
+exit 0
