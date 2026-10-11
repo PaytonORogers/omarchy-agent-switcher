@@ -60,6 +60,17 @@ Item {
   }
   function prettyKey(k) { return (k || "").replace(/\s*\+\s*/g, "+").replace("SUPER", "Super").replace("SHIFT", "Shift").replace("ALT", "Alt").replace("CTRL", "Ctrl").replace("LEFT", "←").replace("RIGHT", "→") }
 
+  // `omarchy plugin add` clones the repo as the plugin but runs no install hook, so on
+  // load we run ../install.sh --from-shell. It is a no-op once installed (marker file);
+  // copies made by install.sh have no install.sh next to them, so this does nothing there.
+  // (Approach from TheronRogers' PR #1.)
+  Process { id: finishInstall }
+  Component.onCompleted: {
+    var script = decodeURIComponent(String(Qt.resolvedUrl("../install.sh")).replace(/^file:\/\//, ""))
+    finishInstall.command = ["bash", "-c", 'if [ -f "$1" ]; then exec "$1" --from-shell; fi', "agent-switcher", script]
+    finishInstall.running = true
+  }
+
   // Auto-hide: when focus leaves special:agents (link opened a browser, user
   // clicked another app or workspace) the script hides panel + strip together.
   property double lastShow: 0

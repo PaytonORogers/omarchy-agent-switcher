@@ -14,6 +14,7 @@ Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 vali
 ## Added later in v1.1 (box-tested only)
 - Sizing: `geometry()`/`size_for()`/`capture_user_size()` in bin/omarchy-agents; saved sizes in `$STATE/size/<class>@<monitor>`. A size change is detected at the next open/switch/hide (no Hyprland resize event), so the strip re-anchors then, not live.
 - Shortcuts sheet: payload `shortcuts` + `sheet`; QML `sheetBox` above the strip (window grows upward); `resize_binds()` reads `hyprctl binds -j` dispatchers matching /resize/ — **verify Omarchy's Lua binds report `dispatcher` that way**; if not, the sheet simply omits resize keys.
+- `omarchy plugin add` (from PR #1): manifest.json at repo root, entry plugin/Switcher.qml; panel runs ../install.sh --from-shell once (marker $STATE/installed = "version source"). Laptop check: `omarchy plugin add <url> --enable --yes` on a clean user.
 - Laptop checks: sizes on the real monitor; resize with Omarchy keys → switch away/back keeps size; strip under resized agent; slide between different-size agents; `?`/button/Esc/click-away on the sheet; sheet doesn't go off the top of the screen.
 
 ## Test env

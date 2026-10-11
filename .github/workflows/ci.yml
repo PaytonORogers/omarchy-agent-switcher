@@ -11,8 +11,8 @@ jobs:
       - name: QML syntax
         run: /usr/lib/qt6/bin/qmlformat plugin/Switcher.qml > /dev/null
       - name: manifest
-        run: jq -e '.id and .version and .entryPoints.panel' plugin/manifest.json
+        run: jq -e '.id and .version and .entryPoints.panel' manifest.json
       - name: version consistency
-        run: test "$(jq -r .version plugin/manifest.json)" = "$(sed -n 's/^VERSION=//p' bin/omarchy-agents)"
+        run: test "$(jq -r .version manifest.json)" = "$(sed -n 's/^VERSION=//p' bin/omarchy-agents)"
       - name: unit tests
         run: tests/run.sh

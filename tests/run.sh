@@ -136,7 +136,7 @@ $OA hint off >/dev/null 2>&1; check "hint off creates config with show_hint = fa
 echo "== uninstall never eats hyprland.lua"
 setup_world
 H=$XDG_CONFIG_HOME/hypr/hyprland.lua; printf 'line1\n-- omarchy-agent-switcher (remove with uninstall.sh)\nline-after-marker\nlast-line\n' > "$H"
-mkdir -p "$T/repo"; cp -r "$ROOT/plugin" "$ROOT/uninstall.sh" "$T/repo/"; bash "$T/repo/uninstall.sh" >/dev/null 2>&1
+mkdir -p "$T/repo"; cp -r "$ROOT/plugin" "$ROOT/manifest.json" "$ROOT/uninstall.sh" "$T/repo/"; bash "$T/repo/uninstall.sh" >/dev/null 2>&1
 check "only the marker line removed when require line is missing" "[[ \$(cat $H) == \$'line1\nline-after-marker\nlast-line' ]]"
 
 echo "== default sizing on different monitors"
@@ -197,6 +197,21 @@ check "missing agent's key not in sheet" "[[ \$P != *'Super+Alt+M'* ]]"
 monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "normal updates close the sheet" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":false'"
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "show_hint=false hides the ? affordance (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
+
+echo "== omarchy plugin add: first-load install (--from-shell)"
+setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"
+P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json"); mkdir -p "$(dirname "$P")"; cp -r "$ROOT" "$P"   # what `omarchy plugin add` does
+bash "$P/install.sh" --from-shell >"$T/inst" 2>&1; rc=$?; : "$rc"
+check "from-shell install succeeds" "(( rc == 0 ))" || cat "$T/inst"
+check "checkout left intact (not staged over itself)" "[[ -f $P/install.sh && -f $P/plugin/Switcher.qml && -d $P/tests ]]"
+check "script + rules installed, include added" "[[ -x $HOME/.local/bin/omarchy-agents && -f $R ]] && grep -qx 'require(\"hypr.agent-switcher\")' $XDG_CONFIG_HOME/hypr/hyprland.lua"
+check "marker written" "grep -q \"^\$(jq -r .version $ROOT/manifest.json) \" $XDG_STATE_HOME/omarchy-agent-switcher/installed"
+check "no shell restart / enable from inside the shell" "! grep -q 'omarchy-restart-shell\|plugin enable' $FAKE/other 2>/dev/null"
+: > "$FAKE/calls"; bash "$P/install.sh" --from-shell >/dev/null 2>&1
+check "second load is a no-op" "! grep -q . $FAKE/calls"
+setup_world; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"; bash "$ROOT/install.sh" --yes --no-restart >/dev/null 2>&1
+P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json")
+check "checkout install copies manifest + plugin/ only (no install.sh -> panel hook no-ops)" "[[ -f $P/manifest.json && -f $P/plugin/Switcher.qml && ! -e $P/install.sh ]]"
 
 echo
 echo "passed: $PASS  failed: $FAILN"

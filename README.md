@@ -19,7 +19,12 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 ## Install
 Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on 0.56.2) and the Omarchy shell, plus `jq`, `flock` (util-linux) and optionally `gum`.
 
-> **Note:** install with `./install.sh`, not `omarchy plugin add`. The plugin is only the tab strip; it needs the `omarchy-agents` script and the generated Hyprland include that `install.sh` sets up.
+```sh
+omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
+```
+On first load the panel runs the bundled `install.sh --from-shell` once (it enables every detected agent; run `omarchy-agents setup` to pick and order them).
+
+Or from a checkout (interactive agent picker):
 ```sh
 git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
 cd omarchy-agent-switcher
@@ -123,6 +128,7 @@ are restored on close (only if the Omarchy default was really there). If you pic
 ## Credits
 - Built for Omarchy by DHH and contributors, on Hyprland and quickshell.
 - Agent icons come from [auxxed's Omarchy agents plugin](https://github.com/auxxed) (MIT). See THIRD_PARTY.md.
+- `omarchy plugin add` support: [Theron Rogers](https://github.com/TheronRogers) (PR #1).
 - Author: Payton Rogers. MIT licensed, see LICENSE.
 
 ## Updating

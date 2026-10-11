@@ -4,20 +4,31 @@
 #   ./install.sh --yes         non-interactive: enable every detected agent
 #   ./install.sh --setup       re-run agent detection even if a config exists
 #   ./install.sh --no-restart  don't restart the Omarchy shell (plugin loads on next restart)
+#   ./install.sh --from-shell  run by the panel on first load after `omarchy plugin add` (which has no install hook);
+#                              no-op once this version is set up (marker file), never restarts the shell
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher
 BIN=$HOME/.local/bin
-ID=$(jq -r .id "$SRC/plugin/manifest.json")
+ID=$(jq -r .id "$SRC/manifest.json")
+VER=$(jq -r .version "$SRC/manifest.json")
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-agent-switcher
+MARKER=$STATE/installed
 PLUG=$CFG_HOME/omarchy/plugins/$ID
 HYPR=$CFG_HOME/hypr/hyprland.lua
 CONF=$CFG_HOME/omarchy-agent-switcher/agents.conf
 HOOK=$CFG_HOME/omarchy/hooks/theme-set
 MARK="-- omarchy-agent-switcher"
 REQ='require("hypr.agent-switcher")'
-YES=""; SETUP=0; RESTART=1
-for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; -h|--help) sed -n '2,6p' "$0"; exit 0 ;; esac; done
+YES=""; SETUP=0; RESTART=1; FROM_SHELL=0
+for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--yes ;; -h|--help) sed -n '2,8p' "$0"; exit 0 ;; esac; done
+
+# First-load install from the panel: only once per version (the marker records version + source).
+if (( FROM_SHELL )); then
+  [[ $(cat "$MARKER" 2>/dev/null) == "$VER $SRC" && -x $BIN/omarchy-agents && -f $CFG_HOME/hypr/agent-switcher.lua && -f $CONF ]] && exit 0
+  exec 8>"${XDG_RUNTIME_DIR:-/tmp}/omarchy-agent-switcher-install.lock"; flock -n 8 || exit 0   # one at a time (shell reloads)
+fi
 
 # ---- preflight: fail before touching anything ----
 fail() { echo "install: $*" >&2; exit 1; }
@@ -34,7 +45,12 @@ echo ":: installing files"
 mkdir -p "$BIN" "$(dirname "$PLUG")" "$(dirname "$DATA")"
 install -m755 "$SRC/bin/omarchy-agents" "$BIN/omarchy-agents.new" && mv "$BIN/omarchy-agents.new" "$BIN/omarchy-agents"
 stage "$SRC/share" "$DATA"
-stage "$SRC/plugin" "$PLUG"
+# `omarchy plugin add` clones this repo straight into $PLUG: it already is the plugin, never stage over it.
+if [[ $(readlink -f "$SRC") != $(readlink -f "$PLUG" 2>/dev/null || echo "$PLUG") ]]; then
+  tmpplug=$(mktemp -d); mkdir -p "$tmpplug/plugin"
+  cp "$SRC/manifest.json" "$tmpplug/"; cp -r "$SRC/plugin"/. "$tmpplug/plugin/"
+  stage "$tmpplug" "$PLUG"; rm -rf "$tmpplug"
+fi
 
 if [[ ! -f $CONF || $SETUP == 1 ]]; then
   echo ":: choosing agents"
@@ -58,6 +74,12 @@ chmod +x "$HOOK"
 
 hyprctl reload >/dev/null
 errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland config errors:"; echo "$errs"; }
+
+mkdir -p "$STATE"; echo "$VER $SRC" > "$MARKER"
+if (( FROM_SHELL )); then   # the shell already loaded us; enabling/restarting from inside it would loop
+  notify-send -a "Agent switcher" "Agent switcher installed" "Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Run omarchy-agents setup to pick agents." 2>/dev/null || true
+  exit 0
+fi
 
 echo ":: enabling shell plugin $ID"
 omarchy-shell -q shell rescanPlugins; sleep 1   # make the shell see the freshly copied plugin
