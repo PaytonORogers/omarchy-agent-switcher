@@ -18,7 +18,7 @@ Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 vali
 - Laptop checks: sizes on the real monitor; resize with Omarchy keys → switch away/back keeps size; strip under resized agent; slide between different-size agents; `?`/button/Esc/click-away on the sheet; sheet doesn't go off the top of the screen.
 
 ## v1.2 (branch v1.2, box-tested only)
-- send / send-shot / send-files (`send_text`, `send_shot`, `send_files`, `paste_into`, `kind_of` in bin/omarchy-agents). Keystroke: wtype → ydotool → `hyprctl dispatch sendshortcut` (unverified under the Lua config). Chromium extension was dropped at Payton's request; selected text goes only via `send_key`.
+- send / send-files (`send_text`, `send_files`, `paste_into`, `kind_of` in bin/omarchy-agents). Keystroke: wtype → ydotool → `hyprctl dispatch sendshortcut` (unverified under the Lua config). Chromium extension was dropped at Payton's request; selected text goes only via `send_key`.
 - Nautilus: integrations/nautilus/omarchy-agent-switcher.py (`--with-nautilus`). Written against the standard nautilus-python MenuProvider API, NOT checked against /usr/share/omarchy/default/nautilus-python (not on the box).
 - Usage meter: vendored collectors in share/collectors (auxxed MIT), `usage_json`/`usage_refresh`/`provider_of`; QML fill + hover %. Records read from ~/.local/state/omarchy/agents/usage/*.json (percent 0..1).
 - `open_on` (`open_on_idx`): toggle target when hidden; setup wizard asks (default last).
@@ -39,3 +39,36 @@ Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 vali
 2. `./install.sh` (keeps agents.conf). `omarchy-agents doctor`; `hyprctl configerrors` empty.
 3. Verify: Super+A open/close slides up; switch L/R directions; cursor stays; click link → panel+strip hide; first launch of an uninstalled-yet agent shows "…" then window; right-click menu; `omarchy-agents hint toggle`; theme change (`omarchy-theme-set <x>`) recolours borders; 2-monitor parking.
 4. Fix anything from step 3, bump CHANGELOG, open PR v1.1 → master (Payton merges).
+
+## Deferred: send-shot (removed from v1.2 at Payton's request)
+Region screenshot → agent. Re-add: `shot_key` setting + bind in gen_rules ("Send screenshot to agent" → `send-shot`), cheat-sheet entry, `send-shot) send_shot ;;` case, README/default conf lines, tests (stubs grim/slurp kept). Use `wlc` (not bare wl-copy) so the clipboard daemon never holds the lock. Code as it was:
+
+```bash
+  (( ${#paths[@]} )) || die "send-files: no existing files given"
+  local kind; kind=$(kind_of "$i")
+  if [[ $kind == tui ]]; then printf '%q ' "${paths[@]}" | wlc
+  elif (( ${#paths[@]} == 1 )) && [[ ${paths[0],,} =~ \.(png|jpe?g|gif|webp)$ ]]; then
+    local ext=${paths[0]##*.}; ext=${ext,,}; [[ $ext == jpg ]] && ext=jpeg; wlc --type "image/$ext" < "${paths[0]}"
+  else printf '%s\n' "${paths[@]}" | jq -Rr '"file://" + (split("/") | map(@uri) | join("/"))' | wlc --type text/uri-list; fi
+  show_target "$i"; paste_into "$i" "$kind"; log "send-files: ${#paths[@]} file(s) -> ${names[$i]} ($kind)"
+}
+capture_region() { # capture_region <file>: grim+slurp, else Omarchy's capture helper
+  if command -v grim >/dev/null && command -v slurp >/dev/null; then local g; g=$(slurp 2>/dev/null) || return 1; grim -g "$g" "$1"
+  elif command -v omarchy-capture-region >/dev/null; then omarchy-capture-region "$1"
+  else die "send-shot needs grim + slurp (or omarchy-capture-region)"; fi
+  [[ -s $1 ]]
+}
+send_shot() {
+  command -v wl-copy >/dev/null || die "send-shot needs wl-clipboard"
+  local d=$STATE/shots f i kind; mkdir -p "$d"; f=$d/shot-$(date +%Y%m%d-%H%M%S).png
+  # the capture is interactive: release the lock so the strip stays usable meanwhile
+  flock -u 9
+  capture_region "$f" || { log "send-shot: cancelled"; return 0; }
+  flock -w 3 9 || exit 0
+  i=$(target_idx); kind=$(kind_of "$i")
+  if [[ $kind == gui ]]; then wlc --type image/png < "$f"; else printf '%s' "$f" | wlc; fi
+  show_target "$i"; paste_into "$i" "$kind"; log "send-shot: $f -> ${names[$i]} ($kind)"
+}
+
+pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; echo "$k"; }
+```

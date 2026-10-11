@@ -17,6 +17,7 @@ Item {
   property double lastSeq: 0
   property string bin: Quickshell.env("HOME") + "/.local/bin/omarchy-agents"
   property string toggleKey: "SUPER + A"
+  property string shortcutsKey: ""
   property string prevKey: "SUPER + ALT + LEFT"
   property string nextKey: "SUPER + ALT + RIGHT"
   property bool hint: true
@@ -44,6 +45,7 @@ Item {
       if (p.monitor !== undefined) monitorName = p.monitor
       if (p.top) stripTop = p.top
       if (p.toggleKey) toggleKey = p.toggleKey
+      if (p.shortcutsKey !== undefined) shortcutsKey = p.shortcutsKey
       if (p.prevKey !== undefined) prevKey = p.prevKey
       if (p.nextKey !== undefined) nextKey = p.nextKey
       if (p.hint !== undefined) hint = p.hint
@@ -128,8 +130,8 @@ Item {
     anchors { top: true }
     // The cheat sheet sits above the strip, so the window grows upward.
     margins.top: Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
-    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
-    implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + (menu.visible ? 20 : 0)
+    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, hintLine.visible ? hintLine.implicitWidth + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
+    implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + ((menu.visible || hintLine.visible) ? 20 : 0)
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchy-agent-switcher"
@@ -224,7 +226,7 @@ Item {
               visible: tab.hasUsage && root.usageDisplay === "fill"
               anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
               width: parent.width * Math.min(1, Math.max(0, tab.usage))
-              radius: parent.radius
+              radius: Math.min(parent.radius, width / 2)
               color: root.usageColor(tab.usage)
               opacity: tab.sel ? 0.45 : 0.3
               Behavior on width { NumberAnimation { duration: 300 } }
@@ -247,11 +249,22 @@ Item {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
-                      + (tab.hasUsage && (root.usageDisplay === "percent" || ma.containsMouse) ? "  " + Math.round(tab.usage * 100) + "%" : "")
                 color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
                 font.family: Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
+              }
+              // Percent: its space is always reserved so hovering never resizes the tab/strip/window.
+              Text {
+                visible: tab.hasUsage
+                opacity: (root.usageDisplay === "percent" || ma.containsMouse) ? 1 : 0
+                anchors.verticalCenter: parent.verticalCenter
+                width: pctMetrics.width
+                horizontalAlignment: Text.AlignRight
+                text: Math.round(tab.usage * 100) + "%"
+                color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
+                font.family: Style.font.family; font.pixelSize: 12
+                TextMetrics { id: pctMetrics; font.family: Style.font.family; font.pixelSize: 12; text: "100%" }
               }
             }
             MouseArea {
@@ -268,19 +281,22 @@ Item {
             }
           }
         }
-        // Compact shortcuts affordance (show_hint controls it).
-        Rectangle {
-          visible: root.hint
-          width: qlbl.implicitWidth + 16; height: 24; radius: 12
-          anchors.verticalCenter: parent.verticalCenter
-          color: (qma.containsMouse || root.sheet) ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.3) : "transparent"
-          border.width: 1; border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
-          Accessible.role: Accessible.Button
-          Accessible.name: "Show shortcuts"
-          Text { id: qlbl; anchors.centerIn: parent; text: "? shortcuts"; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.7); font.family: Style.font.family; font.pixelSize: 10 }
-          MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; onClicked: { strip.forceActiveFocus(); root.sheet = !root.sheet } }
-        }
       }
+    }
+
+    // Hint line under the tabs (show_hint / omarchy-agents hint on|off); the right-click menu replaces it.
+    Text {
+      id: hintLine
+      visible: root.hint && root.menuFor === ""
+      anchors.top: strip.bottom
+      anchors.topMargin: 4
+      anchors.horizontalCenter: strip.horizontalCenter
+      text: (root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+            + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
+            + "  ·  " + root.prettyKey(root.toggleKey) + " close"
+      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
+      font.family: Style.font.family; font.pixelSize: 10
+      style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
     }
 
     // Right-click menu (replaces the hint line while open).

@@ -23,7 +23,7 @@ HOOK=$CFG_HOME/omarchy/hooks/theme-set
 MARK="-- omarchy-agent-switcher"
 REQ='require("hypr.agent-switcher")'
 YES=""; SETUP=0; RESTART=1; FROM_SHELL=0; NAUT=0
-for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --with-nautilus) NAUT=1 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--yes ;; -h|--help) sed -n '2,9p' "$0"; exit 0 ;; esac; done
+for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --with-nautilus) NAUT=1 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--default ;; -h|--help) sed -n '2,9p' "$0"; exit 0 ;; esac; done
 
 # First-load install from the panel: only once per version (the marker records version + source).
 if (( FROM_SHELL )); then
@@ -82,7 +82,7 @@ if (( NAUT )); then
   echo ":: Nautilus integration"
   NX=${XDG_DATA_HOME:-$HOME/.local/share}/nautilus-python/extensions; mkdir -p "$NX"
   install -m644 "$SRC/integrations/nautilus/omarchy-agent-switcher.py" "$NX/"
-  [[ -d /usr/share/nautilus-python || -d /usr/lib/nautilus/extension-4 ]] || echo "   note: install python-nautilus for the menu to appear" >&2
+  [[ -d /usr/share/nautilus-python || -d /usr/lib/nautilus/extensions-4 || -d /usr/lib/nautilus/extension-4 ]] || echo "   note: install python-nautilus for the menu to appear" >&2
   pgrep -x nautilus >/dev/null && { nautilus -q >/dev/null 2>&1 || true; }
 fi
 
@@ -91,7 +91,7 @@ errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland
 
 mkdir -p "$STATE"; echo "$VER $SRC" > "$MARKER"
 if (( FROM_SHELL )); then   # the shell already loaded us; enabling/restarting from inside it would loop
-  notify-send -a "Agent switcher" "Agent switcher installed" "Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Run omarchy-agents setup to pick agents." 2>/dev/null || true
+  notify-send -a "Agent switcher" "Agent switcher installed" "Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Only one agent is enabled; run omarchy-agents setup to add more (or uncomment them in $CONF)." 2>/dev/null || true
   exit 0
 fi
 
@@ -100,5 +100,6 @@ omarchy-shell -q shell rescanPlugins; sleep 1   # make the shell see the freshly
 omarchy plugin enable "$ID" >/dev/null 2>&1 || omarchy-shell -q shell enablePlugin "$ID" '{}'
 if (( RESTART )); then omarchy-restart-shell >/dev/null 2>&1 || true   # a full restart loads the panel reliably
 else echo "   (--no-restart: run omarchy-restart-shell to load the strip)"; fi
-omarchy plugin list 2>/dev/null | grep -q "^${ID}[[:space:]]*enabled" || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
+ok=0; for _ in 1 2 3 4 5 6 7 8 9 10; do omarchy plugin list 2>/dev/null | grep -E "^${ID//./\\.}[[:space:]]+enabled" >/dev/null && { ok=1; break; }; sleep 0.5; done
+(( ok )) || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
 echo "done ($("$BIN/omarchy-agents" version)). Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Config: $CONF"

@@ -8,7 +8,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
-- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a compact **? shortcuts** button that opens a cheat sheet of every switcher key, built from your config. Click a tab, scroll over the strip, or click it and use ← → / Tab / 1-9 / Esc. Right-click a tab for Restart / Close; middle-click closes. Tabs show whether an agent is running, starting (…) or not started yet.
+- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab, scroll over the strip, or click it and use ← → / Tab / 1-9 / Esc. Right-click a tab for Restart / Close; middle-click closes. Tabs show whether an agent is running, starting (…) or not started yet.
 - **Directional switching.** Picking a tab to the right brings that agent in from the right while the old one leaves left, and the reverse for tabs on the left. The slide is ~250 ms and only applies to switches; your other window animations aren't touched.
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
@@ -16,7 +16,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 - **Agent auto-detection.** Install finds the agents you have and lets you pick and order them. Agents that aren't installed are skipped.
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
-- **Send to agent.** `send_key` pastes your selected text into the agent; `shot_key` pastes a region screenshot; right-click files in Nautilus → *Send to agent*.
+- **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
 - **Usage meter.** Each tab fills left to right with that agent's plan usage (accent → amber → red), percent on hover.
 
 ## Install
@@ -78,7 +78,8 @@ override_slide_animation = true     # false = keep your own windowsMove animatio
 opacity = 0.82 0.75
 rounding = 14
 dim = true
-show_hint = true                    # "? shortcuts" button on the strip
+show_hint = true                    # hint line under the tabs
+click_through = true                # while open, clicks on outside windows focus them (closes the panel)
 shortcuts_key =                     # optional global bind for the cheat sheet, e.g. SUPER + SLASH
 start_hidden = grok-bot             # optional: launch this class hidden at login
 
@@ -100,7 +101,6 @@ After editing, run `omarchy-agents rules` to regenerate the Hyprland include and
 | How | What happens |
 |---|---|
 | `send_key` (e.g. `SUPER + CTRL + S`, unbound by default) / `omarchy-agents send` | Pastes the highlighted text (primary selection, else clipboard) into the active agent. Works in any app, including browsers. |
-| `shot_key` / `omarchy-agents send-shot` | Region capture (grim + slurp, else `omarchy-capture-region`), saved in `~/.local/state/omarchy-agent-switcher/shots/`. GUI agents get the image, terminal agents get the file path. |
 | Nautilus right-click → *Send to agent* → *Send to Claude Code* (`--with-nautilus`) | `omarchy-agents send-files <agent> <paths…>` |
 | Other file managers: *Open With → Send to agent* | `omarchy-agents send-files - <paths…>` (active agent) |
 | `omarchy-agents send --text "…"` or `… | omarchy-agents send --text -` | Scripts |
@@ -135,15 +135,15 @@ keeps it centred, and anchors the strip under it. `omarchy-agents reset-size [na
 | Super+Alt+← / → | previous / next agent (only while open) |
 | per-agent `direct key` | open that agent, switch to it, or close it if it's already showing |
 | scroll on strip, or click it then ← → Tab 1-9 Esc | switch / close |
-| `?` on the focused strip, the **? shortcuts** button, or `omarchy-agents shortcuts` | cheat sheet (Esc or click away closes) |
+| `?` on the focused strip, `shortcuts_key`, or `omarchy-agents shortcuts` | cheat sheet (Esc or click away closes) |
 
 The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only while the panel is open, and
 are restored on close (only if the Omarchy default was really there). If you pick keys that already do something else, `omarchy-agents rules` warns you.
 
 ## CLI
-`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | send [--text T] | send-shot | send-files <agent|-> <path…> | usage [--force|--print] | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
+`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | send [--text T] | send-files <agent|-> <path…> | usage [--force|--print] | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
 
-`omarchy-agents hint off` hides the "? shortcuts" button right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
+`omarchy-agents hint off` hides the hint line right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
 ## Troubleshooting
 - **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonorogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.

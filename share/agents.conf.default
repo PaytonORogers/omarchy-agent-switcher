@@ -13,11 +13,11 @@ override_slide_animation = true  # false = keep your own Hyprland windowsMove an
 opacity = 0.82 0.75         # active inactive
 rounding = 14
 dim = true                  # dim the desktop behind the active agent
-show_hint = true           # "? shortcuts" button on the strip (runtime: omarchy-agents hint on/off/toggle)
+show_hint = true           # hint line under the tabs (runtime: omarchy-agents hint on/off/toggle)
+click_through = true       # while open, clicking a window outside the panel focuses it (and closes the panel)
 prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
 next_key = SUPER + ALT + RIGHT
 # send_key = SUPER + CTRL + S    # paste selected text into the agent (default unbound)
-# shot_key = SUPER + CTRL + D    # region screenshot into the agent (default unbound)
 usage_display = fill        # usage meter on tabs: fill | percent | off
 usage_warn = 0.70
 usage_crit = 0.90

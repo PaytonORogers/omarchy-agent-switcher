@@ -197,7 +197,7 @@ check "sheet lists reset-size + click actions" "[[ \$P == *'reset-size'* && \$P 
 check "missing agent's key not in sheet" "[[ \$P != *'Super+Alt+M'* ]]"
 monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "normal updates close the sheet" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":false'"
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
-check "show_hint=false hides the ? affordance (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
+check "show_hint=false hides the hint line (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
 
 echo "== omarchy plugin add: first-load install (--from-shell)"
 setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"
@@ -221,15 +221,16 @@ printf 'secret selected text' > "$FAKE/primary"; : > "$FAKE/wtype"
 $OA send; sleep 1.2
 check "send copies the primary selection" "grep -q 'selected text' $FAKE/copied"
 check "send pastes with Ctrl+Shift+V into a TUI agent" "grep -q -- '-M ctrl -M shift v' $FAKE/wtype"
+check "wl-copy never inherits the lock fd (it daemonizes)" "[[ ! -s $FAKE/wlcopy-fd9 ]]"
 check "selected text is never logged" "! grep -q 'secret selected' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm "$FAKE/primary"; printf 'clip' > "$FAKE/clipboard"; : > "$FAKE/wtype"
 $OA send; sleep 1.2
 check "falls back to clipboard; Ctrl+V for a GUI agent" "grep -q clip $FAKE/copied && grep -qx -- '-M ctrl v -m ctrl' $FAKE/wtype"
-echo "send_key = SUPER + CTRL + S" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; echo "shot_key = SUPER + CTRL + D" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+echo "send_key = SUPER + CTRL + S" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 $OA rules >/dev/null 2>&1
-check "send/shot binds generated" "grep -q 'Send selection to agent' $R && grep -q 'Send screenshot to agent' $R"
+check "send bind generated, no screenshot bind" "grep -q 'Send selection to agent' $R && ! grep -q 'Send screenshot' $R"
 : > "$FAKE/shell"; $OA shortcuts; sleep 0.5
-check "send/shot keys in cheat sheet" "grep summon $FAKE/shell | tail -1 | grep -q 'Send a region screenshot'"
+check "send key in cheat sheet, no screenshot entry" "grep summon $FAKE/shell | tail -1 | grep -q 'Send selected text' && ! grep summon $FAKE/shell | tail -1 | grep -q 'screenshot'"
 
 echo "== send --text / send-files"
 : > "$FAKE/wtype"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
@@ -246,12 +247,18 @@ $OA send-files B "$T/files/a b.txt"; sleep 1.2
 check "TUI: quoted path pasted" "grep -q 'type=text' $FAKE/copied && grep -qF 'a\\ b.txt' $FAKE/copied"
 $OA send-files Nope "$T/files/c.txt" 2>/dev/null; check "send-files unknown agent fails" "(( \$? != 0 ))"
 
-echo "== send-shot"
-: > "$FAKE/wtype"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; $OA send-shot; sleep 1.2
-check "shot saved under state/shots" "ls $XDG_STATE_HOME/omarchy-agent-switcher/shots/shot-*.png >/dev/null"
-check "GUI agent gets the image on the clipboard" "grep -q 'type=image/png' $FAKE/copied && grep -q PNGDATA $FAKE/copied"
-echo B > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; $OA send-shot; sleep 1.2
-check "TUI agent gets the file path" "grep -q 'type=text' $FAKE/copied && grep -q 'shots/shot-' $FAKE/copied"
+echo "== stuck lock recovery"
+setup_world; monitors 1; clients "class.a:0xa1:243"; : > "$FAKE/shell"
+( exec 7>"$XDG_STATE_HOME/omarchy-agent-switcher/lock"; flock 7; sleep 6 ) & hold=$!; sleep 0.3
+$OA toggle >/dev/null 2>&1
+check "toggle force-closes panel + strip when the lock is stuck" "grep -q 'agentswitcher hide' $FAKE/shell && evals | grep -q toggle_special"
+check "stuck lock is logged with its holder" "grep -q 'lock timeout' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+kill $hold 2>/dev/null; wait $hold 2>/dev/null
+setup_world; : > "$FAKE/shell"; $OA rules >/dev/null 2>"$T/err"
+check "unset optional keys give no warnings" "! grep -q 'invalid' $T/err"
+check "click-through while open (special_fallthrough, restored on close)" "grep -q 'special_fallthrough = true' $R && grep -q 'agent_switcher.saved' $R"
+echo "click_through = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA rules >/dev/null 2>&1
+check "click_through = false disables it" "grep -q 'agent_switcher.click_through = false' $R"
 
 echo "== usage meter"
 setup_world; monitors 1; clients "class.a:0xa1:243"
@@ -288,6 +295,15 @@ setup_world; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/a
 printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 script -qc "printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup" /dev/null >/dev/null 2>&1 || printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup >/dev/null 2>&1
 check "wizard writes open_on" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
+
+setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
+printf 'a | A | tui | bin:agent-a | class.a | | \ng | Grok Bot | tui | bin:agent-b | grok-bot | | \nc | C | tui | bin:agent-c | class.c | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+$OA setup --default >/dev/null 2>&1; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+check "first-load default enables only Grok Bot" "[[ \$(grep -cE '^[^#=]+[|]' $C) == 1 ]] && grep -q '^Grok Bot' $C"
+check "other detected agents listed commented out" "grep -q '^# A ' $C && grep -q '^# C ' $C"
+printf 'a | A | tui | bin:agent-a | class.a | | \nc | C | tui | bin:agent-c | class.c | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"; rm "$C"
+$OA setup --default >/dev/null 2>&1
+check "no Grok Bot: first detected only" "[[ \$(grep -cE '^[^#=]+[|]' $C) == 1 ]] && grep -q '^A ' $C"
 
 echo "== install / uninstall with --with-nautilus (stubs)"
 setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"

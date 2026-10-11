@@ -1,9 +1,18 @@
 # Changelog
 
 ## 1.2.0 — 2026-10
+### Fixed (laptop testing)
+- After `send`, the switcher could stop responding (toggle/switch did nothing, strip stuck on screen): `wl-copy` daemonizes and inherited the state lock. It no longer does, and toggle/hide/autohide now force-close panel + strip if the lock is ever stuck.
+- Hovering a tab for its usage % no longer resizes the tab/strip (caused glitches at the strip edges); the % space is reserved.
+- Clicking a window outside the open panel now focuses it and closes the panel (`click_through`, on by default: special_fallthrough + click-to-focus only while open, restored on close).
+- `omarchy plugin add` first load enables one agent (Grok Bot, else the first detected); the others are listed commented out in agents.conf and the notification says how to add more.
+- Installer: no false "install python-nautilus", "plugin not enabled" or empty-key warnings.
+### Changed
+- The "? shortcuts" button is replaced by a hint line under the tabs again (`show_hint`); `?` / `shortcuts_key` still open the sheet.
+- Screenshot sending (`send-shot` / `shot_key`) is deferred to a later version.
 ### Added
 - `open_on = last|first|<agent>` chooses what the toggle opens (asked in the setup wizard; direct keys unaffected).
-- Send to agent: `send` (selection/clipboard, or `--text`), `send-shot` (region capture → image for GUI agents, path for terminal agents), `send-files` (uri-list / image data / quoted paths); optional `send_key` / `shot_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
+- Send to agent: `send` (selection/clipboard, or `--text`), `send-files` (uri-list / image data / quoted paths); optional `send_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
 - Usage meter on tabs (fill/percent/off, warn/crit thresholds, lazy cached refresh) using Omarchy's usage records plus collectors vendored from auxxed/omarchy-agents (MIT). Optional provider field in agents.conf.
 
 ## 1.1.0 — 2026-10
