@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install omarchy-agent-switcher for the current user. Safe to re-run.
-#   ./install.sh            interactive agent selection on first install
-#   ./install.sh --yes      non-interactive: enable every detected agent
-#   ./install.sh --setup    re-run agent detection even if a config exists
+# Install omarchy-agent-switcher for the current user. Safe to re-run (also how you update).
+#   ./install.sh               interactive agent selection on first install
+#   ./install.sh --yes         non-interactive: enable every detected agent
+#   ./install.sh --setup       re-run agent detection even if a config exists
+#   ./install.sh --no-restart  don't restart the Omarchy shell (plugin loads on next restart)
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -12,17 +13,28 @@ ID=$(jq -r .id "$SRC/plugin/manifest.json")
 PLUG=$CFG_HOME/omarchy/plugins/$ID
 HYPR=$CFG_HOME/hypr/hyprland.lua
 CONF=$CFG_HOME/omarchy-agent-switcher/agents.conf
+HOOK=$CFG_HOME/omarchy/hooks/theme-set
 MARK="-- omarchy-agent-switcher"
-YES=""; SETUP=0
-for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; esac; done
-for c in hyprctl jq omarchy-shell; do command -v $c >/dev/null || { echo "missing dependency: $c (is this Omarchy?)" >&2; exit 1; }; done
+REQ='require("hypr.agent-switcher")'
+YES=""; SETUP=0; RESTART=1
+for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; -h|--help) sed -n '2,6p' "$0"; exit 0 ;; esac; done
 
+# ---- preflight: fail before touching anything ----
+fail() { echo "install: $*" >&2; exit 1; }
+for c in hyprctl jq flock omarchy-shell; do command -v "$c" >/dev/null || fail "missing dependency: $c (is this Omarchy?)"; done
+[[ -f $HYPR ]] || fail "$HYPR not found: this needs Omarchy's Hyprland Lua config"
+hyprctl version >/dev/null 2>&1 || fail "Hyprland isn't running (hyprctl failed)"
+bash -n "$SRC/bin/omarchy-agents" || fail "bin/omarchy-agents has a syntax error"
+
+stage() { # stage <src-dir> <dest-dir>: copy into a temp dir, then swap in (no stale files, no half copies)
+  local tmp="$2.new.$$"; rm -rf "$tmp"; mkdir -p "$tmp"; cp -r "$1"/. "$tmp"/
+  rm -rf "$2.old.$$"; [[ -d $2 ]] && mv "$2" "$2.old.$$"; mv "$tmp" "$2"; rm -rf "$2.old.$$"
+}
 echo ":: installing files"
-mkdir -p "$BIN" "$DATA/icons" "$PLUG"
-install -m755 "$SRC/bin/omarchy-agents" "$BIN/omarchy-agents"
-install -m644 "$SRC/share/registry.conf" "$SRC/share/agents.conf.default" "$DATA/"
-install -m644 "$SRC"/share/icons/*.svg "$DATA/icons/"
-install -m644 "$SRC"/plugin/* "$PLUG/"
+mkdir -p "$BIN" "$(dirname "$PLUG")" "$(dirname "$DATA")"
+install -m755 "$SRC/bin/omarchy-agents" "$BIN/omarchy-agents.new" && mv "$BIN/omarchy-agents.new" "$BIN/omarchy-agents"
+stage "$SRC/share" "$DATA"
+stage "$SRC/plugin" "$PLUG"
 
 if [[ ! -f $CONF || $SETUP == 1 ]]; then
   echo ":: choosing agents"
@@ -32,18 +44,25 @@ if [[ ! -f $CONF || $SETUP == 1 ]]; then
 fi
 "$BIN/omarchy-agents" rules
 
-if ! grep -qF -- "$MARK" "$HYPR"; then
+if ! grep -qxF -- "$REQ" "$HYPR"; then
   echo ":: adding include to $HYPR"
   cp "$HYPR" "$HYPR.bak-agent-switcher"
-  printf '\n%s (remove with uninstall.sh)\nrequire("hypr.agent-switcher")\n' "$MARK" >> "$HYPR"
+  printf '\n%s (remove with uninstall.sh)\n%s\n' "$MARK" "$REQ" >> "$HYPR"
 fi
+
+# Regenerate border colours when the Omarchy theme changes.
+mkdir -p "$(dirname "$HOOK")"
+[[ -f $HOOK ]] || printf '#!/bin/bash\n' > "$HOOK"
+grep -qF "# omarchy-agent-switcher" "$HOOK" || echo "\"\$HOME/.local/bin/omarchy-agents\" rules --reload >/dev/null 2>&1 &  # omarchy-agent-switcher" >> "$HOOK"
+chmod +x "$HOOK"
+
 hyprctl reload >/dev/null
 errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland config errors:"; echo "$errs"; }
 
 echo ":: enabling shell plugin $ID"
 omarchy-shell -q shell rescanPlugins; sleep 1   # make the shell see the freshly copied plugin
 omarchy plugin enable "$ID" >/dev/null 2>&1 || omarchy-shell -q shell enablePlugin "$ID" '{}'
-# A full restart (not hot reload) loads the panel reliably.
-omarchy-restart-shell >/dev/null 2>&1 || true
-omarchy plugin list 2>/dev/null | grep -q "^$ID[[:space:]]*enabled" || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
-echo "done. Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Config: $CONF"
+if (( RESTART )); then omarchy-restart-shell >/dev/null 2>&1 || true   # a full restart loads the panel reliably
+else echo "   (--no-restart: run omarchy-restart-shell to load the strip)"; fi
+omarchy plugin list 2>/dev/null | grep -q "^${ID}[[:space:]]*enabled" || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
+echo "done ($("$BIN/omarchy-agents" version)). Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Config: $CONF"
