@@ -6,7 +6,8 @@ toggle_key = SUPER + A
 width = 0.62                # panel size/position as fractions of the focused monitor
 height = 0.82
 top = 0.06
-slide_ms = 250              # agent-switch slide duration
+slide_ms = 250              # agent-switch slide duration; 0 = off
+override_slide_animation = true  # false = keep your own Hyprland windowsMove animation
 opacity = 0.82 0.75         # active inactive
 rounding = 14
 dim = true                  # dim the desktop behind the active agent
