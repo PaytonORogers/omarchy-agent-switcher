@@ -587,6 +587,26 @@ bash "$ROOT/uninstall.sh" >/dev/null 2>&1
 check "uninstall restores hyprland.lua" "[[ \$(cat $XDG_CONFIG_HOME/hypr/hyprland.lua) == '-- user config' ]]"
 check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py && ! -e $XDG_DATA_HOME/applications/omarchy-agents-send.desktop ]]"
 
+echo "== strip allow-list"
+setup_world
+check "no only line shows every installed agent" "[[ \$($OA list) == \$'A\nB\nC' ]]"
+$OA disable B >/dev/null
+C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+check "disable keeps the others, in order" "grep -qx 'only = A, C' $C"
+check "list hides the disabled agent" "[[ \$($OA list) == \$'A\nC' ]]"
+check "hidden agent is left out of the window rule" "! grep -q 'class\\.b' $R"
+$OA enable class.b >/dev/null
+check "enable matches the window class, ignoring case" "grep -qx 'only = A, C, B' $C"
+printf '# D | class.d | agent-a | |\n' >> "$C"
+$OA enable D >/dev/null
+check "enable uncomments a configured agent" "grep -q '^D |' $C && grep -qx 'only = A, C, B, D' $C"
+$OA disable A C B D >/dev/null
+check "disabling the last agent leaves an empty only line" "grep -qx 'only = ' $C"
+check "empty only shows nothing" "[[ -z \$($OA list) ]]"
+check "unknown disable fails" "! $OA disable Nope"
+sed -i 's/^only = .*/only = C, A/' "$C"
+check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
+
 echo
 echo "passed: $PASS  failed: $FAILN"
 (( FAILN == 0 ))
