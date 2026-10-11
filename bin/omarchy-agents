@@ -6,7 +6,7 @@
 #   omarchy-agents show <name>       open, or slide to, an agent
 #   omarchy-agents next|prev         cycle agents (tab order)
 #   omarchy-agents direct <class> [--start-hidden]   per-agent shortcut
-#   omarchy-agents hide | list | rules | setup [--yes] | doctor
+#   omarchy-agents hide | list | rules | setup [--yes] | doctor | hint on|off|toggle
 set -u
 VERSION=1.0.0
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -27,7 +27,7 @@ die() { echo "omarchy-agents: $*" >&2; exit 1; }
 
 # ---------- config ----------------------------------------------------------
 declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=0.62 [height]=0.82
-  [top]=0.06 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [hint]=true
+  [top]=0.06 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
   [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" )
 names=(); classes=(); cmds=(); keys=(); icons=(); all_names=()
 # Resolve the program a launch line runs (skipping wrappers/flags) and check it exists.
@@ -78,6 +78,7 @@ gen_rules() {
     echo "ab(\"${S[toggle_key]}\", \"Agent switcher\", \"$SELF toggle\")"
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"${keys[$i]}\", \"${names[$i]} (agent switcher)\", \"$SELF direct ${classes[$i]}\")"; done
     [[ -n ${S[start_hidden]} ]] && echo "o.launch_on_start(\"$SELF direct ${S[start_hidden]} --start-hidden\")"
+    echo "hl.animation({ leaf = \"windowsMove\", enabled = true, speed = $(awk -v m="${S[slide_ms]}" 'BEGIN{printf "%.2f", m/100}'), bezier = \"easeOutQuint\" })  -- agent switch slide (slide_ms)"
     # Cycle keys exist only while the panel is open (omarchy-agents calls on()/off()).
     # Omarchy's own binds on these keys are put back on close.
     cat <<LUA
@@ -133,6 +134,7 @@ agent_line() { # registry line -> agents.conf line
   local k=""; [[ -f $CONF ]] && k=$(awk -F'|' -v c="$c" '$2 ~ "^[ \t]*"c"[ \t]*$" {gsub(/^[ \t]+|[ \t]+$/,"",$4); print $4; exit}' "$CONF")
   printf '%-14s | %-26s | %s | %s | %s\n' "$n" "$c" "$l" "$k" "$ic"
 }
+have_gum() { [[ -z ${OMARCHY_AGENTS_NO_GUM:-} ]] && command -v gum >/dev/null; }   # OMARCHY_AGENTS_NO_GUM=1 forces plain prompts
 setup() {
   [[ -f $REGISTRY ]] || die "registry not found ($REGISTRY); run install.sh"
   local yes=0; [[ ${1:-} == --yes || ${1:-} == --detect || ! -t 0 ]] && yes=1
@@ -143,7 +145,7 @@ setup() {
   if (( yes )); then chosen=("${found[@]}")
   else
     echo "Detected agents:"; local sel
-    if command -v gum >/dev/null; then
+    if have_gum; then
       mapfile -t sel < <(gum choose --no-limit --header "Agents for the Super+A switcher (space toggles)" --selected="$(IFS=,; echo "${labels[*]}")" "${labels[@]}")
     else
       local i a; for i in "${!labels[@]}"; do read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}"); done
@@ -152,7 +154,7 @@ setup() {
     local -a ordered=("${sel[@]}") ord
     if (( ${#sel[@]} > 1 )); then
       local i; for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
-      local o; if command -v gum >/dev/null; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o; fi
+      local o; if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o; fi
       if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
     fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
@@ -167,99 +169,121 @@ setup() {
 }
 
 # ---------- runtime ---------------------------------------------------------
+# Speed matters here: every hyprctl/jq spawn is ~10-30 ms on a laptop, so state
+# is read once (monitors + clients + cursor, in parallel) and all window changes
+# for one action go to Hyprland as a single Lua chunk via `hyprctl eval`.
 runtime_init() {
   exec 9>"$STATE/lock"; flock -w 3 9 || exit 0
-  load_conf; N=${#names[@]}; (( N )) || { notify-send "Agent switcher" "No agents available — run omarchy-agents setup" 2>/dev/null; exit 1; }
+  local tmp=$STATE/snap.$$
+  hyprctl -j monitors > "$tmp.m" & hyprctl -j clients > "$tmp.c" & hyprctl cursorpos > "$tmp.p" & wait
+  load_conf; N=${#names[@]}; (( N )) || { rm -f "$tmp".*; notify-send "Agent switcher" "No agents available — run omarchy-agents setup" 2>/dev/null; exit 1; }
   last=$(cat "$STATE/last" 2>/dev/null || echo "${names[0]}")
-  read -r MON MX MY MW MH < <(hyprctl monitors -j | jq -r 'first(.[]|select(.focused)) | (if (.transform % 2)==1 then [.height,.width] else [.width,.height] end) as $wh
-    | "\(.name) \(.x) \(.y) \(($wh[0]/.scale)|floor) \(($wh[1]/.scale)|floor)"')
-  SX=$(awk -v m="$MX" -v w="$MW" -v f="${S[width]}" 'BEGIN{printf "%d", m + w*(1-f)/2}')
-  SY=$(awk -v m="$MY" -v h="$MH" -v f="${S[top]}" 'BEGIN{printf "%d", m + h*f}')
-  PW=$(awk -v w="$MW" -v f="${S[width]}" 'BEGIN{printf "%d", w*f}'); PH=$(awk -v h="$MH" -v f="${S[height]}" 'BEGIN{printf "%d", h*f}')
+  CURSOR=$(<"$tmp.p")
+  # One jq pass: focused monitor geometry, visibility, and "class addr ws w h x" per agent window.
+  local cls; cls=$(printf '%s\n' "${classes[@]}" | jq -R . | jq -sc .)
+  local out; out=$(jq -r -n --slurpfile m "$tmp.m" --slurpfile c "$tmp.c" --argjson cls "$cls" --arg ws "special:$WS" '
+    ($m[0] | first(.[]|select(.focused))) as $f
+    | (if ($f.transform % 2)==1 then [$f.height,$f.width] else [$f.width,$f.height] end) as $wh
+    | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end)",
+      ($cls[] as $k | first($c[0][] | select(.class==$k)) // null | if . then "\(.class) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
+  rm -f "$tmp".*
+  read -r MON MX MY MW MH VIS <<<"$(head -1 <<<"$out")"
+  declare -gA ADDR=() WSN=() WW=() WH=() WX=()
+  local c a w x y z; while read -r c a w x y z; do [[ -n $c ]] || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z; done <<<"$(tail -n +2 <<<"$out")"
+  local fw ft fh; read -r fw ft fh < <(awk -v a="${S[width]}" -v b="${S[top]}" -v c="${S[height]}" 'BEGIN{printf "%d %d %d", a*100+.5, b*100+.5, c*100+.5}')
+  SX=$(( MX + MW * (100 - fw) / 200 )); SY=$(( MY + MH * ft / 100 ))
+  PW=$(( MW * fw / 100 )); PH=$(( MH * fh / 100 ))
   read -r OA OI <<<"${S[opacity]}"; OI=${OI:-$OA}
+  LUA=""
 }
+q() { LUA+="hl.dispatch($1) "; }                      # queue a dispatcher
+flush() { [[ -n $LUA ]] && hyprctl eval "$LUA" >/dev/null 2>&1; LUA=""; }
 idx_of() { local i; for i in "${!names[@]}"; do [[ ${names[$i]} == "$1" || ${classes[$i]} == "$1" ]] && { echo $i; return; }; done; [[ $1 =~ ^[0-9]+$ ]] && (( $1 < N )) && { echo $1; return; }; echo 0; }
-visible() { [[ $(hyprctl monitors -j | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; }
-addr_of() { hyprctl clients -j | jq -r --arg c "${classes[$1]}" 'first(.[]|select(.class==$c)|.address)//empty'; }
-prop() { d "hl.dsp.window.set_prop({ window = 'address:$1', prop = '$2', value = '$3' })"; }
-place() { # place <addr> <x> [anim]
-  [[ ${3:-} == anim ]] || prop "$1" no_anim 1
-  d "hl.dsp.window.move({ window = 'address:$1', x = $2, y = $SY })"
-  [[ ${3:-} == anim ]] || prop "$1" no_anim 0
-}
-left_of()  { echo $(( MX - $1 - 40 )); }   # just past the monitor's left edge
+visible() { (( VIS == 1 )); }
+addr_of() { echo "${ADDR[${classes[$1]}]:-}"; }
+prop() { q "hl.dsp.window.set_prop({ window = 'address:$1', prop = '$2', value = '$3' })"; }
+move() { q "hl.dsp.window.move({ window = 'address:$1', x = $2, y = $SY })"; }
+teleport() { prop "$1" no_anim 1; move "$1" "$2"; prop "$1" no_anim 0; }
+left_of()  { echo $(( MX - $1 - 40 )); }   # just past the focused monitor's edges
 right_of() { echo $(( MX + MW + 40 )); }
-focus_keep_cursor() { # hl.dsp.focus warps the pointer; put it back where it was
-  local pos; pos=$(hyprctl cursorpos)
-  d "hl.dsp.focus({ window = 'address:$1' })"
-  d "hl.dsp.cursor.move({ x = ${pos%%,*}, y = ${pos##*, } })"
-}
-ensure() { # ensure <idx> -> addr; launches if needed, window in special:agents at panel size
-  local i=$1 a ws
-  a=$(addr_of $i)
+park_x() { local c=${classes[$1]}; (( $1 < $2 )) && left_of "${WW[$c]:-$PW}" || right_of; }
+keep_cursor() { q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; }   # hl.dsp.focus warps the pointer
+ensure() { # ensure <idx>: launch if needed; queue move into special:agents + resize only when needed
+  local i=$1 c=${classes[$1]} a
+  a=${ADDR[$c]:-}
   if [[ -z $a ]]; then
     setsid bash -c "${cmds[$i]}" >/dev/null 2>&1 9>&- &
-    for _ in $(seq 80); do sleep 0.25; a=$(addr_of $i); [[ -n $a ]] && break; done
-    [[ -z $a ]] && return 1; sleep 0.3
+    for _ in $(seq 80); do sleep 0.25
+      a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c)) | "\(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])"' 2>/dev/null)
+      [[ -n $a && $a != null* ]] && break; a=""; done
+    [[ -z $a ]] && return 1
+    read -r ADDR[$c] WSN[$c] WW[$c] WH[$c] WX[$c] <<<"$a"; a=${ADDR[$c]}; sleep 0.3
   fi
-  ws=$(hyprctl clients -j | jq -r --arg a "$a" 'first(.[]|select(.address==$a)).workspace.name')
-  [[ $ws != "special:$WS" ]] && d "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"
-  d "hl.dsp.window.resize({ window = 'address:$a', x = $PW, y = $PH })"
-  echo "$a"
+  [[ ${WSN[$c]} != "special:$WS" ]] && { q "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"; WSN[$c]=special:$WS; }
+  if (( ${WW[$c]:-0} != PW || ${WH[$c]:-0} != PH )); then q "hl.dsp.window.resize({ window = 'address:$a', x = $PW, y = $PH })"; WW[$c]=$PW; WH[$c]=$PH; fi
+  return 0
 }
-park_others() { # park_others <active> [skip]: lower tabs wait off-screen left, higher tabs right
-  local j a; for j in "${!names[@]}"; do (( j == $1 || j == ${2:--1} )) && continue; a=$(addr_of $j); [[ -z $a ]] && continue
-    prop "$a" dim_around 0; (( j < $1 )) && place "$a" "$(left_of $PW)" || place "$a" "$(right_of)"; done
-}
-activate() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; }
+dim_on() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; return 0; }
 payload() {
   local i ic out="["; for i in "${!names[@]}"; do
     ic=${icons[$i]}; if [[ -z $ic ]]; then :; elif [[ $ic == /* ]]; then ic="file://$ic"
     elif [[ -f $DATA/icons/$ic.svg ]]; then ic="file://$DATA/icons/$ic.svg"; else ic="image://icon/$ic"; fi
     out+="$(jq -cn --arg n "${names[$i]}" --arg i "$ic" '{name:$n,icon:$i}'),"; done; out="${out%,}]"
   jq -cn --argjson a "$out" --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
-    --argjson top "$(( SY - MY + PH + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" --argjson hint "$([[ ${S[hint]} == true ]] && echo true || echo false)" \
+    --argjson top "$(( SY - MY + PH + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
+    --argjson hint "$(show_hint && echo true || echo false)" \
     '{agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint}'
 }
-strip_show() { timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$(payload $1)" >/dev/null 2>&1; }
-strip_hide() { timeout 2 omarchy-shell -q agentswitcher hide >/dev/null 2>&1; }
+show_hint() { local v=${S[show_hint]:-${S[hint]:-true}}; [[ $v == true || $v == on || $v == 1 ]]; }
+# Strip updates go to the shell in the background so they never delay the slide.
+strip_show() { ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$(payload $1)" ) >/dev/null 2>&1 9>&- & }
+strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
 
-open_idx() { # hidden -> visible, up-from-bottom (specialWorkspace slidevert)
-  local i=$1 a j b; a=$(ensure $i) || exit 1
+open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
+  local i=$1 a j b
+  ensure $i || exit 1; a=$(addr_of $i)
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
-    ensure $j >/dev/null; prop "$b" opacity 0; prop "$b" opacity_inactive 0; done   # hidden workspaces clamp off-screen windows: hide them until re-parked
-  place "$a" "$SX"; activate "$a"
-  echo "${names[$i]}" > "$STATE/last"
-  visible || d "hl.dsp.workspace.toggle_special('$WS')"
-  cycle_keys on
-  park_others $i
-  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] && { prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; }; done
-  focus_keep_cursor "$a"; strip_show $i
+    ensure $j; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
+  teleport "$a" "$SX"; dim_on "$a"
+  q "hl.dsp.workspace.toggle_special('$WS')"
+  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
+    teleport "$b" "$(park_x $j $i)"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
+  q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor
+  LUA+="if agent_switcher then agent_switcher.on() end "
+  flush
+  echo "${names[$i]}" > "$STATE/last"; strip_show $i
 }
-slide_anim() { # scope a faster windowsMove animation to this switch, then restore
-  local g; g=$(date +%s%N); echo "$g" > "$STATE/animgen"
-  [[ -f $STATE/anim-orig ]] || hyprctl animations -j | jq -r '.[0][]|select(.name=="windows")|"\(.speed) \(.bezier)"' > "$STATE/anim-orig"
-  hyprctl eval "hl.animation({ leaf = 'windowsMove', enabled = true, speed = $(awk -v m="${S[slide_ms]}" 'BEGIN{printf "%.2f", m/100}'), bezier = 'easeOutQuint' })" >/dev/null 2>&1
-  ( sleep "$(awk -v m="${S[slide_ms]}" 'BEGIN{print (m+150)/1000}')"
-    [[ $(cat "$STATE/animgen") == "$g" ]] || exit 0
-    read -r sp bz < "$STATE/anim-orig"; rm -f "$STATE/anim-orig"
-    hyprctl eval "hl.animation({ leaf = 'windowsMove', enabled = true, speed = $sp, bezier = '${bz:-default}' })" >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
+switch_to() { # visible -> horizontal slide in tab order, one eval
+  local i=$1 cur a b c from out
+  cur=$(idx_of "$last"); (( i == cur )) && { strip_show $i; return; }
+  ensure $i || exit 1; a=$(addr_of $i); b=$(addr_of $cur); c=${classes[$i]}
+  # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
+  (( i > cur )) && from=$(right_of) || from=$(left_of "${WW[$c]:-$PW}")
+  [[ ${WX[$c]:-x} != "$from" ]] && teleport "$a" "$from"
+  if [[ -n $b ]]; then
+    (( i > cur )) && out=$(left_of "${WW[${classes[$cur]}]:-$PW}") || out=$(right_of)
+    prop "$b" dim_around 0; move "$b" "$out"
+  fi
+  move "$a" "$SX"; dim_on "$a"
+  q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor
+  # other (non-adjacent) agents: make sure they wait on the correct side
+  local j x; for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of $j); [[ -n $x ]] || continue
+    [[ ${WX[${classes[$j]}]:-} != "$(park_x $j $i)" ]] && teleport "$x" "$(park_x $j $i)"; done
+  flush
+  echo "${names[$i]}" > "$STATE/last"; strip_show $i
 }
-switch_to() { # visible -> horizontal slide in tab order
-  local i=$1 cur a b w; cur=$(idx_of "$last")
-  (( i == cur )) && { strip_show $i; return; }
-  a=$(ensure $i) || exit 1; b=$(addr_of $cur)
-  w=$(hyprctl clients -j | jq -r --arg a "$a" 'first(.[]|select(.address==$a)).size[0]')
-  (( i > cur )) && place "$a" "$(right_of)" || place "$a" "$(left_of $w)"
-  echo "${names[$i]}" > "$STATE/last"
-  slide_anim
-  if [[ -n $b ]]; then prop "$b" dim_around 0; (( i > cur )) && place "$b" "$(left_of $w)" anim || place "$b" "$(right_of)" anim; fi
-  place "$a" "$SX" anim; activate "$a"
-  focus_keep_cursor "$a"; strip_show $i
-  park_others $i $cur
+hide_all() {
+  visible && q "hl.dsp.workspace.toggle_special('$WS')"
+  LUA+="if agent_switcher then agent_switcher.off() end "; flush; strip_hide
 }
 cycle_keys() { hyprctl eval "if agent_switcher then agent_switcher.$1() end" >/dev/null 2>&1; }
-hide_all() { visible && d "hl.dsp.workspace.toggle_special('$WS')"; cycle_keys off; strip_hide; }
+set_hint() { # hint on|off|toggle: persist show_hint in agents.conf and update the strip
+  local v; case ${1:-toggle} in on|true) v=true ;; off|false) v=false ;; toggle) show_hint && v=false || v=true ;; *) die "usage: hint on|off|toggle" ;; esac
+  if grep -qE '^[[:space:]]*(show_hint|hint)[[:space:]]*=' "$CONF"; then
+    sed -i -E "s/^([[:space:]]*)(show_hint|hint)([[:space:]]*)=[[:space:]]*[A-Za-z0-9]+/\1show_hint\3= $v/" "$CONF"
+  else sed -i "0,/^toggle_key/s//show_hint = $v\n&/" "$CONF"; grep -q '^show_hint' "$CONF" || echo "show_hint = $v" >> "$CONF"; fi
+  S[show_hint]=$v; echo "hint $( [[ $v == true ]] && echo on || echo off)"
+}
 
 doctor() {
   load_conf; echo "omarchy-agents $VERSION"; echo "config:   $CONF $([[ -f $CONF ]] || echo '(missing)')"; echo "rules:    $RULES $([[ -f $RULES ]] || echo '(missing)')"
@@ -275,15 +299,18 @@ case $cmd in
   doctor) doctor; exit ;;
   list) load_conf; printf '%s\n' "${names[@]}"; exit ;;
   version|--version) echo "$VERSION"; exit ;;
+  hint) ( load_conf; set_hint "${2:-toggle}" ) || exit 1
+        if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
+          runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit ;;
 esac
 runtime_init
 case $cmd in
   toggle) if visible; then hide_all; else open_idx "$(idx_of "$last")"; fi ;;
   show)   i=$(idx_of "${2:-$last}"); if visible; then switch_to $i; else open_idx $i; fi ;;
-  next|prev) visible || { cycle_keys off; strip_hide; exit 0; }   # panel was closed some other way
+  next|prev) visible || { cycle_keys off; strip_hide; wait; exit 0; }   # panel was closed some other way
           i=$(idx_of "$last"); [[ $cmd == next ]] && i=$(( (i+1)%N )) || i=$(( (i-1+N)%N )); switch_to $i ;;
   direct) i=$(idx_of "${2:-}")
-          if [[ ${3:-} == --start-hidden ]]; then ensure $i >/dev/null
+          if [[ ${3:-} == --start-hidden ]]; then ensure $i; flush
           elif visible && [[ ${names[$i]} == "$last" ]]; then hide_all
           elif visible; then switch_to $i
           else open_idx $i; fi ;;

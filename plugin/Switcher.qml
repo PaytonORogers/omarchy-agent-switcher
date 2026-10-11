@@ -56,6 +56,7 @@ Item {
     function hide(): string { root.close(); return "ok" }
     function state(): string { return root.opened ? "open:" + root.active : "closed" }
     function ping(): string { return "ok" }
+    function metrics(): string { return "window=" + win.implicitWidth + " strip=" + strip.width + " hint=" + Math.ceil(hintText.implicitWidth) + " hintVisible=" + root.hint }
   }
 
   PanelWindow {
@@ -64,7 +65,8 @@ Item {
     screen: root.screenFor(root.monitorName)
     anchors { top: true }
     margins.top: root.stripTop
-    implicitWidth: strip.width
+    // Wide enough for the tab row or the hint, whichever is longer.
+    implicitWidth: Math.max(strip.width, root.hint ? hintText.implicitWidth + 24 : 0)
     implicitHeight: 44 + (root.hint ? 18 : 0)
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -75,6 +77,7 @@ Item {
 
     Rectangle {
       id: strip
+      anchors.horizontalCenter: parent.horizontalCenter
       width: row.implicitWidth + 16
       height: 44
       radius: 22
@@ -143,6 +146,7 @@ Item {
     }
 
     Text {
+      id: hintText
       visible: root.hint
       anchors.top: strip.bottom
       anchors.topMargin: 3

@@ -53,11 +53,11 @@ next_key   = SUPER + ALT + RIGHT
 accent     =                        # empty = theme accent; e.g. #9B7BD4
 accent_inactive =                   # empty = theme selection colour
 width = 0.62   height = 0.82   top = 0.06   # fractions of the focused monitor (one per line)
-slide_ms = 250
+slide_ms = 250                      # agent-switch slide; sets Hyprland's windowsMove animation once
 opacity = 0.82 0.75
 rounding = 14
 dim = true
-hint = true
+show_hint = true                    # keyboard hint under the strip
 start_hidden = grok-bot             # optional: launch this class hidden at login
 
 # name | window class | launch command | direct key (optional) | icon (optional)
@@ -82,7 +82,9 @@ The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only whil
 are restored on close. If you pick keys that already do something else, `omarchy-agents rules` warns you.
 
 ## CLI
-`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | list | setup [--yes] | rules | doctor`
+`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | list | setup [--yes] | rules | doctor | hint on|off|toggle`
+
+`omarchy-agents hint off` hides the keyboard hint right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
 ## Troubleshooting
 - **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonrogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.
