@@ -89,6 +89,9 @@ are restored on close. If you pick keys that already do something else, `omarchy
 ## Troubleshooting
 - **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonrogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.
 - **Agent not floating or in the wrong place:** check its real class with `hyprctl clients`, fix it in `agents.conf`, then run `omarchy-agents rules`.
+- **Agent tab shows a plain terminal or takes a while the first time:** that's the agent's own first run. For example, Omarchy's `~/.local/bin/claude` installs Claude Code with mise on first launch, which is a one-time download of ~200 MB, and Codex shows a sign-in screen until you log in. Switching never waits for a starting agent: its window pops into the panel when it's ready, and you get a "Starting …" notification.
+- **Launch lines:** `$HOME` and `~` are expanded, and bare program names are resolved against PATH plus mise shims, `~/.local/bin`, npm, bun and cargo before launching. Apps started through uwsm/systemd don't see your shell's PATH.
+- **Pre-launch:** `start_hidden = grok-bot, org.omarchy.agent.claude` takes a comma list of classes to start hidden at login, so the first open is instant.
 - **Tab missing:** its program wasn't found. `doctor` lists skipped agents.
 - **Config errors:** `hyprctl configerrors`. The generated file is `~/.config/hypr/agent-switcher.lua`.
 - **Multi-monitor:** the panel opens on the focused monitor. Inactive agents wait just past that monitor's left and right edges, which can overlap a neighbouring monitor. Please report any issues.

@@ -77,7 +77,7 @@ gen_rules() {
     echo "local function ab(key, desc, cmd) pcall(hl.unbind, key); o.bind(key, desc, cmd) end"
     echo "ab(\"${S[toggle_key]}\", \"Agent switcher\", \"$SELF toggle\")"
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"${keys[$i]}\", \"${names[$i]} (agent switcher)\", \"$SELF direct ${classes[$i]}\")"; done
-    [[ -n ${S[start_hidden]} ]] && echo "o.launch_on_start(\"$SELF direct ${S[start_hidden]} --start-hidden\")"
+    [[ -n ${S[start_hidden]} ]] && echo "o.launch_on_start(\"$SELF direct ${S[start_hidden]// /} --start-hidden\")"
     echo "hl.animation({ leaf = \"windowsMove\", enabled = true, speed = $(awk -v m="${S[slide_ms]}" 'BEGIN{printf "%.2f", m/100}'), bezier = \"easeOutQuint\" })  -- agent switch slide (slide_ms)"
     # Cycle keys exist only while the panel is open (omarchy-agents calls on()/off()).
     # Omarchy's own binds on these keys are put back on close.
@@ -208,17 +208,35 @@ left_of()  { echo $(( MX - $1 - 40 )); }   # just past the focused monitor's edg
 right_of() { echo $(( MX + MW + 40 )); }
 park_x() { local c=${classes[$1]}; (( $1 < $2 )) && left_of "${WW[$c]:-$PW}" || right_of; }
 keep_cursor() { q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; }   # hl.dsp.focus warps the pointer
-ensure() { # ensure <idx>: launch if needed; queue move into special:agents + resize only when needed
+resolve_cmd() { # make the launch line independent of the caller's PATH:
+  # uwsm-app/systemd don't see mise/npm/~/.local/bin, so turn the program into an absolute path.
+  local -a t; read -r -a t <<<"$1"; local i x out=() done=0
+  for i in "${!t[@]}"; do x=${t[$i]}
+    if (( !done )); then case $x in uwsm-app|app2unit|setsid|env|--|omarchy-launch-tui|omarchy-launch-or-focus-tui|-*|*=*) out+=("$x"); continue ;; esac
+      x=${x/#\~/$HOME}; x=${x//\$HOME/$HOME}; [[ $x != */* ]] && x=$(command -v "$x" || echo "$x"); done=1; fi
+    out+=("$x"); done
+  echo "${out[*]}"
+}
+launch() { # launch <idx> in the background (never blocks); window rules put it in special:agents at the slot
+  local i=$1
+  [[ -f $STATE/launch.${classes[$i]} ]] && (( $(date +%s) - $(stat -c %Y "$STATE/launch.${classes[$i]}") < 30 )) && return 0
+  touch "$STATE/launch.${classes[$i]}"
+  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "${cmds[$i]}")" ) >/dev/null 2>&1 9>&- &
+}
+await_window() { # background: when agent <idx> maps, focus + dim it if it's still the active tab
+  local i=$1 c=${classes[$1]} n=${names[$1]}
+  ( for _ in $(seq 150); do
+      a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c))|.address // empty'); [[ -n $a ]] && break; sleep 0.2; done
+    rm -f "$STATE/launch.$c"; [[ -n $a && $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
+    p=$(hyprctl cursorpos); l="hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) "
+    [[ ${S[dim]} == true ]] && l+="hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) "
+    hyprctl eval "$l" >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
+}
+starting() { notify-send -a "Agent switcher" -u low -t 2500 "Starting ${names[$1]}…" 2>/dev/null & }
+ensure() { # ensure <idx>: 0 = window exists (queued fixes), 2 = launching in background
   local i=$1 c=${classes[$1]} a
   a=${ADDR[$c]:-}
-  if [[ -z $a ]]; then
-    setsid bash -c "${cmds[$i]}" >/dev/null 2>&1 9>&- &
-    for _ in $(seq 80); do sleep 0.25
-      a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c)) | "\(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])"' 2>/dev/null)
-      [[ -n $a && $a != null* ]] && break; a=""; done
-    [[ -z $a ]] && return 1
-    read -r ADDR[$c] WSN[$c] WW[$c] WH[$c] WX[$c] <<<"$a"; a=${ADDR[$c]}; sleep 0.3
-  fi
+  [[ -z $a ]] && { launch $i; return 2; }
   [[ ${WSN[$c]} != "special:$WS" ]] && { q "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"; WSN[$c]=special:$WS; }
   if (( ${WW[$c]:-0} != PW || ${WH[$c]:-0} != PH )); then q "hl.dsp.window.resize({ window = 'address:$a', x = $PW, y = $PH })"; WW[$c]=$PW; WH[$c]=$PH; fi
   return 0
@@ -240,37 +258,39 @@ strip_show() { ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$(payload
 strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
 
 open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
-  local i=$1 a j b
-  ensure $i || exit 1; a=$(addr_of $i)
+  local i=$1 a j b pending=0
+  ensure $i || pending=1; a=$(addr_of $i)
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
     ensure $j; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
-  teleport "$a" "$SX"; dim_on "$a"
+  [[ -n $a ]] && { teleport "$a" "$SX"; dim_on "$a"; }
   q "hl.dsp.workspace.toggle_special('$WS')"
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
     teleport "$b" "$(park_x $j $i)"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
-  q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor
+  [[ -n $a ]] && { q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
   LUA+="if agent_switcher then agent_switcher.on() end "
   flush
   echo "${names[$i]}" > "$STATE/last"; strip_show $i
+  (( pending )) && { starting $i; await_window $i; }
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
-  local i=$1 cur a b c from out
+  local i=$1 cur a b c from out pending=0
   cur=$(idx_of "$last"); (( i == cur )) && { strip_show $i; return; }
-  ensure $i || exit 1; a=$(addr_of $i); b=$(addr_of $cur); c=${classes[$i]}
+  ensure $i || pending=1; a=$(addr_of $i); b=$(addr_of $cur); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
   (( i > cur )) && from=$(right_of) || from=$(left_of "${WW[$c]:-$PW}")
-  [[ ${WX[$c]:-x} != "$from" ]] && teleport "$a" "$from"
+  [[ -n $a && ${WX[$c]:-x} != "$from" ]] && teleport "$a" "$from"
   if [[ -n $b ]]; then
     (( i > cur )) && out=$(left_of "${WW[${classes[$cur]}]:-$PW}") || out=$(right_of)
     prop "$b" dim_around 0; move "$b" "$out"
   fi
-  move "$a" "$SX"; dim_on "$a"
-  q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor
+  [[ -n $a ]] && { move "$a" "$SX"; dim_on "$a"; q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
   # other (non-adjacent) agents: make sure they wait on the correct side
   local j x; for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of $j); [[ -n $x ]] || continue
     [[ ${WX[${classes[$j]}]:-} != "$(park_x $j $i)" ]] && teleport "$x" "$(park_x $j $i)"; done
   flush
   echo "${names[$i]}" > "$STATE/last"; strip_show $i
+  (( pending )) && { starting $i; await_window $i; }   # new window appears in the slot (rules), no blocking
+  return 0
 }
 hide_all() {
   visible && q "hl.dsp.workspace.toggle_special('$WS')"
@@ -310,7 +330,7 @@ case $cmd in
   next|prev) visible || { cycle_keys off; strip_hide; wait; exit 0; }   # panel was closed some other way
           i=$(idx_of "$last"); [[ $cmd == next ]] && i=$(( (i+1)%N )) || i=$(( (i-1+N)%N )); switch_to $i ;;
   direct) i=$(idx_of "${2:-}")
-          if [[ ${3:-} == --start-hidden ]]; then ensure $i; flush
+          if [[ ${3:-} == --start-hidden ]]; then for c in ${2//,/ }; do ensure "$(idx_of "$c")"; done; flush
           elif visible && [[ ${names[$i]} == "$last" ]]; then hide_all
           elif visible; then switch_to $i
           else open_idx $i; fi ;;

@@ -13,7 +13,7 @@ dim = true                  # dim the desktop behind the active agent
 show_hint = true           # small keyboard hint under the strip (runtime: omarchy-agents hint on/off/toggle)
 prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
 next_key = SUPER + ALT + RIGHT
-# start_hidden = grok-bot   # window class to launch hidden at login
+# start_hidden = grok-bot  # comma list of window classes to launch hidden at login
 # ---- agents: name | window class | launch | direct key (optional) | icon (optional) ----
 # Agents whose program isn't installed are skipped automatically.
 Grok Bot   | grok-bot              | uwsm-app -- grok-bot | SUPER + SHIFT + A | grok-bot
