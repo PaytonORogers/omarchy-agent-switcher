@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Commons
 
 // Tab strip shown under the omarchy-agents drop-down. All state comes from the
@@ -37,6 +38,7 @@ Item {
       if (p.nextKey) nextKey = p.nextKey
       if (p.hint !== undefined) hint = p.hint
       opened = true
+      lastShow = Date.now()
     } catch (e) {}
   }
   function close() { opened = false }
@@ -49,6 +51,27 @@ Item {
   function prettyKey(k) { return k.replace(/\s*\+\s*/g, "+").replace("SUPER", "Super").replace("SHIFT", "Shift").replace("ALT", "Alt").replace("CTRL", "Ctrl").replace("LEFT", "←").replace("RIGHT", "→") }
 
   Process { id: proc }
+  Process { id: autohideProc; command: [root.bin, "autohide"] }
+
+  // Auto-hide: when focus leaves special:agents (link opened a browser, user
+  // clicked another app or workspace) the script hides panel + strip together.
+  // Events are debounced, and ignored briefly after our own open/switch.
+  property double lastShow: 0
+  Timer {
+    id: autohideTimer
+    interval: 180
+    onTriggered: if (root.opened && !autohideProc.running) autohideProc.running = true
+  }
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!root.opened || !event || !event.name) return
+      var n = String(event.name)
+      if (n !== "activewindowv2" && n !== "activespecial" && n !== "workspace" && n !== "workspacev2" && n !== "focusedmon" && n !== "openwindow") return
+      if (Date.now() - root.lastShow < 400) return
+      autohideTimer.restart()
+    }
+  }
 
   IpcHandler {
     target: "agentswitcher"

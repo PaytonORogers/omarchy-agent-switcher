@@ -6,7 +6,7 @@
 #   omarchy-agents show <name>       open, or slide to, an agent
 #   omarchy-agents next|prev         cycle agents (tab order)
 #   omarchy-agents direct <class> [--start-hidden]   per-agent shortcut
-#   omarchy-agents hide | list | rules | setup [--yes] | doctor | hint on|off|toggle
+#   omarchy-agents hide | autohide | list | rules | setup [--yes] | doctor | hint on|off|toggle
 set -u
 VERSION=1.0.0
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -269,7 +269,7 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   [[ -n $a ]] && { q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
   LUA+="if agent_switcher then agent_switcher.on() end "
   flush
-  echo "${names[$i]}" > "$STATE/last"; strip_show $i
+  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show $i
   (( pending )) && { starting $i; await_window $i; }
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
@@ -288,7 +288,7 @@ switch_to() { # visible -> horizontal slide in tab order, one eval
   local j x; for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of $j); [[ -n $x ]] || continue
     [[ ${WX[${classes[$j]}]:-} != "$(park_x $j $i)" ]] && teleport "$x" "$(park_x $j $i)"; done
   flush
-  echo "${names[$i]}" > "$STATE/last"; strip_show $i
+  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show $i
   (( pending )) && { starting $i; await_window $i; }   # new window appears in the slot (rules), no blocking
   return 0
 }
@@ -335,5 +335,14 @@ case $cmd in
           elif visible; then switch_to $i
           else open_idx $i; fi ;;
   hide)   hide_all ;;
+  autohide) # called by the strip on focus/workspace events: close if focus left the agents
+          # grace period after our own open/switch, and while an agent is still starting
+          (( $(date +%s%3N) - $(cat "$STATE/acted" 2>/dev/null || echo 0) < 1000 )) && exit 0
+          compgen -G "$STATE/launch.*" >/dev/null && [[ -n $(find "$STATE" -name 'launch.*' -newermt '-15 seconds' 2>/dev/null) ]] && exit 0
+          if ! visible; then LUA+="if agent_switcher then agent_switcher.off() end "; flush; strip_hide
+          else
+            aw=$(hyprctl -j activewindow | jq -r '"\(.address // "") \(.workspace.name // "")"'); read -r aa awn <<<"$aw"
+            [[ -n $aa && $aa != null && $awn != "special:$WS" ]] && hide_all
+          fi ;;
   *) sed -n '5,10p' "$SELF" >&2; exit 2 ;;
 esac
