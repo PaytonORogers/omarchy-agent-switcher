@@ -17,7 +17,9 @@ if [[ -f $HYPR ]] && grep -qE "^($MARK|require\(\"hypr\.agent-switcher\"\))" "$H
   mv "$HYPR.tmp" "$HYPR"
 fi
 [[ -f $HOOK ]] && { grep -vF "# omarchy-agent-switcher" "$HOOK" > "$HOOK.tmp" || true; mv "$HOOK.tmp" "$HOOK"; chmod +x "$HOOK"; }
-rm -f "$CFG_HOME/hypr/agent-switcher.lua"
+rm -f "$CFG_HOME/hypr/agent-switcher.lua" \
+      "${XDG_DATA_HOME:-$HOME/.local/share}/applications/omarchy-agents-send.desktop" \
+      "${XDG_DATA_HOME:-$HOME/.local/share}/nautilus-python/extensions/omarchy-agent-switcher.py"
 hyprctl reload >/dev/null 2>&1 || true
 omarchy plugin disable "$ID" >/dev/null 2>&1 || true
 rm -rf "$CFG_HOME/omarchy/plugins/$ID" "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher" \

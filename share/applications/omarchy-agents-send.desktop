@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Send to agent
+Comment=Paste these files into the active Omarchy agent
+Exec=omarchy-agents send-files - %F
+Icon=mail-send
+MimeType=application/octet-stream;inode/directory;text/plain;image/png;image/jpeg;application/pdf;
+NoDisplay=true
+Terminal=false

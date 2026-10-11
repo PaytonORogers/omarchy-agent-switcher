@@ -1,0 +1,506 @@
+#!/usr/bin/python3
+# omarchy:summary=Print the Grok Bot usage record as JSON
+# omarchy:args=[--force] [--limits-only]
+# omarchy:hidden=true
+"""Collect Grok Bot weekly usage into the agents-panel JSON record.
+
+Grok Bot's allowance is separate from SuperGrok Chat/Build. It lives on
+Cursor's sand API. Credentials come from the Grok Bot app
+(~/.config/Grok Bot/sand-secrets.json) or a Cursor CLI login
+(~/.cursor/auth.json). The token is only sent as an HTTP header.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "grok-bot"
+AGENT_NAME = "Grok Bot"
+AUTH_HELP = "Sign in to the Grok Bot app, or Cursor, to read the weekly Grok Bot pool."
+CURSOR_HOST = "api2.cursor.sh"
+SAND_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
+CURSOR_TOKEN_URL = "https://api2.cursor.sh/oauth/token"
+CURSOR_CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
+MAX_SECRET_BYTES = 262144
+MAX_HTTP_BYTES = 1_048_576
+HTTP_TIMEOUT = 12
+JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def grok_bot_dir() -> Path:
+    return Path.home() / ".config" / "Grok Bot"
+
+
+def cache_root() -> Path:
+    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "omarchy" / "agent-usage"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def read_bounded_json(path: Path, max_bytes: int) -> dict[str, Any] | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_nlink != 1:
+            return None
+        if st.st_size > max_bytes:
+            return None
+        os.set_blocking(fd, True)
+        data = b""
+        while len(data) <= max_bytes:
+            chunk = os.read(fd, min(65536, max_bytes + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+        if len(data) > max_bytes:
+            return None
+        parsed = json.loads(data.decode("utf-8"))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+    finally:
+        os.close(fd)
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
+        tmp.chmod(0o600)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def jwt_claims(token: str) -> dict[str, Any]:
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        return claims if isinstance(claims, dict) else {}
+    except Exception:
+        return {}
+
+
+def jwt_expired(token: str, skew_seconds: int = 60) -> bool:
+    exp = jwt_claims(token).get("exp")
+    try:
+        return float(exp) <= time.time() + skew_seconds
+    except (TypeError, ValueError):
+        return False
+
+
+def jwt_from_bytes(data: bytes) -> str | None:
+    match = JWT_RE.search(data.decode("utf-8", "replace"))
+    return match.group(0) if match else None
+
+
+def libsecret_password(application: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/secret-tool", "lookup", "application", application],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout or b""
+    if len(raw) > 4096:
+        return None
+    secret = raw.decode("utf-8", "replace").strip()
+    return secret or None
+
+
+def decrypt_chromium_v10(blob_b64: str, password: str) -> bytes | None:
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.hashes import SHA1
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    except Exception:
+        return None
+    try:
+        raw = base64.b64decode(blob_b64)
+    except (ValueError, TypeError):
+        return None
+    if not raw.startswith(b"v10") or len(raw) <= 19:
+        return None
+    ct = raw[3:]
+    iv = b" " * 16
+    for iterations in (1, 1003):
+        kdf = PBKDF2HMAC(algorithm=SHA1(), length=16, salt=b"saltysalt", iterations=iterations)
+        key = kdf.derive(password.encode("utf-8"))
+        decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        try:
+            plain = decryptor.update(ct) + decryptor.finalize()
+        except Exception:
+            continue
+        if not plain:
+            continue
+        pad = plain[-1]
+        if 1 <= pad <= 16 and plain[-pad:] == bytes([pad]) * pad:
+            plain = plain[:-pad]
+        if jwt_from_bytes(plain):
+            return plain
+    return None
+
+
+def decrypt_grok_bot_secret(blob_b64: str) -> str | None:
+    if not blob_b64:
+        return None
+    passwords: list[str] = []
+    stored = libsecret_password("Grok Bot")
+    if stored:
+        passwords.append(stored)
+    passwords.append("peanuts")
+    seen: set[str] = set()
+    for password in passwords:
+        if password in seen:
+            continue
+        seen.add(password)
+        plain = decrypt_chromium_v10(blob_b64, password)
+        if not plain:
+            continue
+        token = jwt_from_bytes(plain)
+        if token:
+            return token
+    return None
+
+
+def grok_bot_tokens() -> tuple[str | None, str | None]:
+    secrets = read_bounded_json(grok_bot_dir() / "sand-secrets.json", MAX_SECRET_BYTES)
+    if not secrets:
+        return None, None
+    try:
+        accounts = json.loads(str(secrets.get("cursor-accounts") or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(accounts, dict):
+        return None, None
+    active = accounts.get("active")
+    bucket = (accounts.get("accounts") or {}).get(active) if active else None
+    if not isinstance(bucket, dict):
+        return None, None
+    access = decrypt_grok_bot_secret(str(bucket.get("cursor-access-token") or ""))
+    refresh = decrypt_grok_bot_secret(str(bucket.get("cursor-refresh-token") or ""))
+    return access, refresh
+
+
+def cursor_auth_file_tokens() -> tuple[str | None, str | None]:
+    for path in (
+        Path.home() / ".config" / "cursor" / "auth.json",
+        Path.home() / ".cursor" / "auth.json",
+    ):
+        data = read_bounded_json(path, MAX_SECRET_BYTES)
+        if not data:
+            continue
+        access = data.get("accessToken") or data.get("access_token")
+        refresh = data.get("refreshToken") or data.get("refresh_token")
+        return (str(access) if access else None, str(refresh) if refresh else None)
+    return None, None
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+    http_error_301 = http_error_302
+    http_error_303 = http_error_302
+    http_error_307 = http_error_302
+    http_error_308 = http_error_302
+
+
+def http_json(url: str, *, method: str = "GET", headers: dict[str, str] | None = None, data: bytes | None = None) -> tuple[int, dict[str, Any]]:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != CURSOR_HOST or parsed.username or parsed.password:
+        return -1, {}
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    opener = urllib.request.build_opener(NoRedirectHandler)
+    try:
+        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
+            body = resp.read(MAX_HTTP_BYTES + 1)
+            status = int(resp.status)
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read(MAX_HTTP_BYTES)
+        except Exception:
+            body = b""
+        status = int(exc.code)
+    except Exception:
+        return -1, {}
+    if not body or len(body) > MAX_HTTP_BYTES:
+        return status, {}
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return status, {}
+    return status, payload if isinstance(payload, dict) else {}
+
+
+def cursor_checksum(machine_id: str) -> str:
+    now_ms = int(time.time() * 1000)
+    ks = now_ms // 1_000_000
+    buf = bytearray([
+        (ks >> 40) & 255,
+        (ks >> 32) & 255,
+        (ks >> 24) & 255,
+        (ks >> 16) & 255,
+        (ks >> 8) & 255,
+        ks & 255,
+    ])
+    prev = 165
+    for i, byte in enumerate(buf):
+        buf[i] = ((byte ^ prev) + (i % 256)) & 255
+        prev = buf[i]
+    return base64.urlsafe_b64encode(bytes(buf)).decode("ascii").rstrip("=") + machine_id
+
+
+def cursor_rpc(method: str, token: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+    machine = str(uuid.uuid4())
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token,
+        "Connect-Protocol-Version": "1",
+        "x-cursor-checksum": cursor_checksum(machine),
+        "x-cursor-client-type": "sand",
+        "x-cursor-client-version": "0.1.0",
+        "x-sand-box-namespace": "prod",
+        "x-ghost-mode": "true",
+        "x-request-id": str(uuid.uuid4()),
+    }
+    return http_json(
+        f"https://{CURSOR_HOST}/aiserver.v1.DashboardService/{method}",
+        method="POST",
+        headers=headers,
+        data=json.dumps(payload if payload is not None else {}).encode(),
+    )
+
+
+def cursor_refresh(refresh_token: str) -> str | None:
+    body = json.dumps({
+        "client_id": CURSOR_CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }).encode()
+    status, payload = http_json(
+        CURSOR_TOKEN_URL,
+        method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        data=body,
+    )
+    if status != 200:
+        return None
+    access = payload.get("access_token") or payload.get("accessToken")
+    return str(access) if access else None
+
+
+def usable_cursor_token() -> str | None:
+    access, refresh = grok_bot_tokens()
+    if not access:
+        access, refresh = cursor_auth_file_tokens()
+    if access and jwt_expired(access) and refresh:
+        rotated = cursor_refresh(refresh)
+        if rotated:
+            access = rotated
+    if access and jwt_expired(access, skew_seconds=0):
+        return None
+    return access
+
+
+def usage_percent(value: Any) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return -1.0
+    if n != n or n < 0:
+        return -1.0
+    if n > 1:
+        n = n / 100.0
+    return min(1.0, n)
+
+
+def iso_from_any(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1e12:
+            ts /= 1000.0
+        try:
+            return dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    raw = str(value).strip()
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return raw
+
+
+def empty_stats() -> dict[str, Any]:
+    today = dt.datetime.now().date()
+    recent = [(today - dt.timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    return {
+        "todayPrompts": 0,
+        "todaySessions": 0,
+        "todayTotalTokens": 0,
+        "todayTokensByModel": {},
+        "recentDays": [{"date": day, "messageCount": 0} for day in recent],
+        "modelUsage": {},
+        "totalPrompts": 0,
+        "totalSessions": 0,
+        "activeDays": 0,
+        "activeDates": [],
+    }
+
+
+def credentials_present() -> bool:
+    if (grok_bot_dir() / "sand-secrets.json").is_file():
+        return True
+    for path in (Path.home() / ".config" / "cursor" / "auth.json", Path.home() / ".cursor" / "auth.json"):
+        if path.is_file():
+            return True
+    return False
+
+
+def collect_limits(force: bool) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "limits": [],
+        "tierLabel": "",
+        "usageStatusText": "",
+        "authHelpText": AUTH_HELP,
+    }
+    cache_file = cache_root() / "grok-bot-limits.json"
+    cached = read_bounded_json(cache_file, MAX_SECRET_BYTES) or {}
+    fallback = cached.get("limits") if isinstance(cached.get("limits"), list) else []
+    fallback_tier = str(cached.get("tierLabel") or "")
+
+    if not credentials_present():
+        result["usageStatusText"] = "Waiting for auth"
+        return result
+
+    token = usable_cursor_token()
+    if not token:
+        result["limits"] = fallback
+        result["tierLabel"] = fallback_tier
+        result["usageStatusText"] = "Sign-in expired"
+        result["retryAdvised"] = True
+        return result
+
+    if not force:
+        fetched_at = float(cached.get("fetchedAtMs") or 0) / 1000.0
+        if fetched_at and 0 <= time.time() - fetched_at < 15 and fallback:
+            result["limits"] = fallback
+            result["tierLabel"] = fallback_tier
+            result["authHelpText"] = ""
+            return result
+
+    status, payload = cursor_rpc("GetSandUsageStatus", token)
+    if status == -1:
+        result["limits"] = fallback
+        result["tierLabel"] = fallback_tier
+        result["usageStatusText"] = "Grok Bot limits unavailable"
+        result["retryAdvised"] = True
+        return result
+    if status in (401, 403):
+        result["limits"] = fallback
+        result["tierLabel"] = fallback_tier
+        result["usageStatusText"] = "Sign-in expired"
+        return result
+    if status != 200:
+        result["limits"] = fallback
+        result["tierLabel"] = fallback_tier
+        result["usageStatusText"] = "Grok Bot limits unavailable"
+        result["retryAdvised"] = True
+        return result
+
+    used = usage_percent(payload.get("usagePercent"))
+    if used < 0:
+        used = 0.0 if payload.get("hasAvailableUsage") else 1.0
+    resets = iso_from_any(payload.get("nextResetTimestampUtc"))
+    plan = str(payload.get("grokPlanLabel") or payload.get("includedUsageSuperGrokPlan") or "Grok Bot").strip()
+    if plan in ("true", "True", "1"):
+        plan = "SuperGrok"
+    result["limits"] = [{
+        "label": "Weekly (7-day)",
+        "title": "Weekly",
+        "percent": used,
+        "resetsAt": resets,
+    }]
+    result["tierLabel"] = plan
+    result["authHelpText"] = ""
+    if payload.get("hasAvailableUsage") is False:
+        result["usageStatusText"] = "Weekly Grok Bot allowance exhausted"
+        result["authHelpText"] = "The Grok Bot pool resets at the time shown on the meter."
+    if payload.get("hasNonZeroIncludedLimit") is False:
+        result["limits"] = []
+        result["usageStatusText"] = "No Grok Bot allowance"
+        result["authHelpText"] = "This login has no included Grok Bot weekly pool."
+    try:
+        write_json(cache_file, {
+            "fetchedAtMs": round(time.time() * 1000),
+            "limits": result["limits"],
+            "tierLabel": result["tierLabel"],
+        })
+    except Exception:
+        pass
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Print the Grok Bot usage record as JSON")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--limits-only", action="store_true")
+    args = parser.parse_args()
+
+    limits = collect_limits(args.force)
+    has_limits = len(limits["limits"]) > 0
+    stats = empty_stats()
+    record = {
+        "schemaVersion": 1,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "ready": has_limits,
+        "hasLocalStats": False,
+        "hasPromptStats": False,
+        "tierLabel": limits["tierLabel"],
+        "usageStatusText": limits["usageStatusText"],
+        "authHelpText": limits["authHelpText"],
+        "limits": limits["limits"],
+    }
+    if limits.get("retryAdvised"):
+        record["retryAdvised"] = True
+    record.update(stats)
+    print(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

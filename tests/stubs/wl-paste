@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+if [[ " $* " == *" -p "* ]]; then cat "$FAKE/primary" 2>/dev/null; else cat "$FAKE/clipboard" 2>/dev/null; fi

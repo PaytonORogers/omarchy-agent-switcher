@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0 — 2026-10
+### Added
+- Send to agent: `send` (selection/clipboard, or `--text`), `send-shot` (region capture → image for GUI agents, path for terminal agents), `send-files` (uri-list / image data / quoted paths); optional `send_key` / `shot_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
+- Usage meter on tabs (fill/percent/off, warn/crit thresholds, lazy cached refresh) using Omarchy's usage records plus collectors vendored from auxxed/omarchy-agents (MIT). Optional provider field in agents.conf.
+
 ## 1.1.0 — 2026-10
 ### Fixed
 - `uninstall.sh` removes exactly its two lines from `hyprland.lua` (a missing marker could delete the rest of the file).

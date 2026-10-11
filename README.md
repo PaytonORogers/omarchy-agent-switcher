@@ -16,6 +16,9 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 - **Agent auto-detection.** Install finds the agents you have and lets you pick and order them. Agents that aren't installed are skipped.
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
+- **Send to agent.** `send_key` pastes your selected text into the agent; `shot_key` pastes a region screenshot; right-click files in Nautilus → *Send to agent*.
+- **Usage meter.** Each tab fills left to right with that agent's plan usage (accent → amber → red), percent on hover.
+
 ## Install
 Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on 0.56.2) and the Omarchy shell, plus `jq`, `flock` (util-linux) and optionally `gum`.
 
@@ -31,6 +34,7 @@ cd omarchy-agent-switcher
 ./install.sh          # interactive: pick + order detected agents (uses gum if present)
 ./install.sh --yes    # non-interactive: enable every detected agent
 ./install.sh --no-restart   # skip the shell restart (strip loads next time the shell restarts)
+./install.sh --with-nautilus  # optional: "Send to agent" in the Nautilus right-click menu (needs python-nautilus)
 ```
 `install.sh` can be re-run safely. It:
 - copies `omarchy-agents` to `~/.local/bin`
@@ -91,6 +95,32 @@ After editing, run `omarchy-agents rules` to regenerate the Hyprland include and
 
 **Terminal agents:** use an absolute path or `$HOME/...` for the binary. Apps launched through uwsm don't see your shell's PATH.
 
+## Send to agent
+| How | What happens |
+|---|---|
+| `send_key` (e.g. `SUPER + CTRL + S`, unbound by default) / `omarchy-agents send` | Pastes the highlighted text (primary selection, else clipboard) into the active agent. Works in any app, including browsers. |
+| `shot_key` / `omarchy-agents send-shot` | Region capture (grim + slurp, else `omarchy-capture-region`), saved in `~/.local/state/omarchy-agent-switcher/shots/`. GUI agents get the image, terminal agents get the file path. |
+| Nautilus right-click → *Send to agent* → *Send to Claude Code* (`--with-nautilus`) | `omarchy-agents send-files <agent> <paths…>` |
+| Other file managers: *Open With → Send to agent* | `omarchy-agents send-files - <paths…>` (active agent) |
+| `omarchy-agents send --text "…"` or `… | omarchy-agents send --text -` | Scripts |
+
+GUI agents get files as a `text/uri-list` (a single image as image data) and a Ctrl+V; terminal agents get shell-quoted paths and Ctrl+Shift+V.
+The panel opens on the agent first. Keystrokes use `wtype`, else `ydotool`, else Hyprland's `sendshortcut`. Note: this replaces your clipboard.
+Selected text is never written to the log.
+
+## Usage meter
+Usage comes from the same records as Omarchy's agent usage (`~/.local/state/omarchy/agents/usage/<provider>.json`). Omarchy's own
+`omarchy-agent-usage-update` covers Claude/Codex, and the bundled collectors from auxxed's agents plugin cover Grok, Grok Bot and Hermes.
+Each tab shows the highest limit for its provider. The provider is guessed from the class/command (grok, grok-bot, claude, codex, hermes, …);
+set it explicitly as an optional 6th field: `Name | class | launch | key | icon | provider`.
+```ini
+usage_display = fill        # fill | percent | off
+usage_warn = 0.70           # amber from here
+usage_crit = 0.90           # red from here
+usage_refresh_min = 10      # collectors run on open, at most this often, and on this interval while open
+```
+`omarchy-agents usage --force` refreshes now. Collector output is never logged.
+
 ## Sizing
 Sizes are computed from the focused monitor's logical size (scale and rotation applied) minus reserved space such as the top bar.
 **Resize any agent with Omarchy's normal resize keys** while it's showing; the switcher remembers that agent's size per monitor,
@@ -110,7 +140,7 @@ The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only whil
 are restored on close (only if the Omarchy default was really there). If you pick keys that already do something else, `omarchy-agents rules` warns you.
 
 ## CLI
-`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
+`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | send [--text T] | send-shot | send-files <agent|-> <path…> | usage [--force|--print] | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
 
 `omarchy-agents hint off` hides the "? shortcuts" button right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
@@ -127,7 +157,7 @@ are restored on close (only if the Omarchy default was really there). If you pic
 
 ## Credits
 - Built for Omarchy by DHH and contributors, on Hyprland and quickshell.
-- Agent icons come from [auxxed's Omarchy agents plugin](https://github.com/auxxed) (MIT). See THIRD_PARTY.md.
+- Usage collectors (`share/collectors/`) and agent icons come from [auxxed's Omarchy agents plugin](https://github.com/auxxed) (MIT). See THIRD_PARTY.md.
 - `omarchy plugin add` support: [Theron Rogers](https://github.com/TheronRogers) (PR #1).
 - Author: Payton Rogers. MIT licensed, see LICENSE.
 

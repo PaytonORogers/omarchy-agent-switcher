@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+t=text; [[ ${1:-} == --type ]] && t=$2
+{ printf 'type=%s\n' "$t"; cat; echo; } > "$FAKE/copied"

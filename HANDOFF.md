@@ -1,4 +1,4 @@
-# HANDOFF — omarchy-agent-switcher v1.1 (for Grok Build / next agent)
+# HANDOFF — omarchy-agent-switcher v1.1 → v1.2 (for Grok Build / next agent)
 
 ## Goal
 Polished, portable Super+A agent drop-down for Omarchy (bash `bin/omarchy-agents` + quickshell plugin `plugin/Switcher.qml`
@@ -17,8 +17,14 @@ Item map: 1 uninstall exact lines · 2 one-setting-per-line + warnings · 3 vali
 - `omarchy plugin add` (from PR #1): manifest.json at repo root, entry plugin/Switcher.qml; panel runs ../install.sh --from-shell once (marker $STATE/installed = "version source"). Laptop check: `omarchy plugin add <url> --enable --yes` on a clean user.
 - Laptop checks: sizes on the real monitor; resize with Omarchy keys → switch away/back keeps size; strip under resized agent; slide between different-size agents; `?`/button/Esc/click-away on the sheet; sheet doesn't go off the top of the screen.
 
+## v1.2 (branch v1.2, box-tested only)
+- send / send-shot / send-files (`send_text`, `send_shot`, `send_files`, `paste_into`, `kind_of` in bin/omarchy-agents). Keystroke: wtype → ydotool → `hyprctl dispatch sendshortcut` (unverified under the Lua config). Chromium extension was dropped at Payton's request; selected text goes only via `send_key`.
+- Nautilus: integrations/nautilus/omarchy-agent-switcher.py (`--with-nautilus`). Written against the standard nautilus-python MenuProvider API, NOT checked against /usr/share/omarchy/default/nautilus-python (not on the box).
+- Usage meter: vendored collectors in share/collectors (auxxed MIT), `usage_json`/`usage_refresh`/`provider_of`; QML fill + hover %. Records read from ~/.local/state/omarchy/agents/usage/*.json (percent 0..1).
+- Laptop checks: paste lands in Grok Bot (Ctrl+V) and in TUI agents (Ctrl+Shift+V); image paste into Grok Bot; slurp cancel; Nautilus menu shows and sends; usage fill shows real numbers for grok/grok-bot/claude/codex; tokens absent from ~/.local/state/omarchy-agent-switcher/log; whether `omarchy-capture-region` exists/accepts a path.
+
 ## Test env
-`tests/run.sh` (needs bash, jq, flock; lua5.4 `luac` optional) — 67 checks, fake `hyprctl`/`omarchy-shell` in `tests/stubs` serve JSON from `$FAKE`, record calls in `$FAKE/calls`. Lint: `shellcheck -S warning bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*`; QML syntax: `/usr/lib/qt6/bin/qmlformat plugin/Switcher.qml >/dev/null` (qmllint can't resolve Quickshell modules → noise). CI: `.github/workflows/ci.yml`.
+`tests/run.sh` (needs bash, jq, flock; lua5.4 `luac` optional) — 99 checks, fake `hyprctl`/`omarchy-shell` in `tests/stubs` serve JSON from `$FAKE`, record calls in `$FAKE/calls`. Lint: `shellcheck -S warning bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*`; QML syntax: `/usr/lib/qt6/bin/qmlformat plugin/Switcher.qml >/dev/null` (qmllint can't resolve Quickshell modules → noise). CI: `.github/workflows/ci.yml`.
 
 ## Gotchas
 - `setsid` in `launch` doesn't fork → never `wait` for all children at script end (would block on the agent).

@@ -6,6 +6,7 @@
 #   ./install.sh --no-restart  don't restart the Omarchy shell (plugin loads on next restart)
 #   ./install.sh --from-shell  run by the panel on first load after `omarchy plugin add` (which has no install hook);
 #                              no-op once this version is set up (marker file), never restarts the shell
+#   ./install.sh --with-nautilus   add "Send to agent" to the Nautilus right-click menu
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -21,8 +22,8 @@ CONF=$CFG_HOME/omarchy-agent-switcher/agents.conf
 HOOK=$CFG_HOME/omarchy/hooks/theme-set
 MARK="-- omarchy-agent-switcher"
 REQ='require("hypr.agent-switcher")'
-YES=""; SETUP=0; RESTART=1; FROM_SHELL=0
-for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--yes ;; -h|--help) sed -n '2,8p' "$0"; exit 0 ;; esac; done
+YES=""; SETUP=0; RESTART=1; FROM_SHELL=0; NAUT=0
+for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --with-nautilus) NAUT=1 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--yes ;; -h|--help) sed -n '2,9p' "$0"; exit 0 ;; esac; done
 
 # First-load install from the panel: only once per version (the marker records version + source).
 if (( FROM_SHELL )); then
@@ -71,6 +72,19 @@ mkdir -p "$(dirname "$HOOK")"
 [[ -f $HOOK ]] || printf '#!/bin/bash\n' > "$HOOK"
 grep -qF "# omarchy-agent-switcher" "$HOOK" || echo "\"\$HOME/.local/bin/omarchy-agents\" rules --reload >/dev/null 2>&1 &  # omarchy-agent-switcher" >> "$HOOK"
 chmod +x "$HOOK"
+
+# "Send to agent" for any file manager's Open With (hidden from the app launcher).
+APPS=${XDG_DATA_HOME:-$HOME/.local/share}/applications; mkdir -p "$APPS"
+install -m644 "$SRC/share/applications/omarchy-agents-send.desktop" "$APPS/"
+command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" >/dev/null 2>&1 || true
+
+if (( NAUT )); then
+  echo ":: Nautilus integration"
+  NX=${XDG_DATA_HOME:-$HOME/.local/share}/nautilus-python/extensions; mkdir -p "$NX"
+  install -m644 "$SRC/integrations/nautilus/omarchy-agent-switcher.py" "$NX/"
+  [[ -d /usr/share/nautilus-python || -d /usr/lib/nautilus/extension-4 ]] || echo "   note: install python-nautilus for the menu to appear" >&2
+  pgrep -x nautilus >/dev/null && { nautilus -q >/dev/null 2>&1 || true; }
+fi
 
 hyprctl reload >/dev/null
 errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland config errors:"; echo "$errs"; }

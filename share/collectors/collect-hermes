@@ -1,0 +1,767 @@
+#!/usr/bin/python3
+# omarchy:summary=Print the Hermes usage record as JSON
+# omarchy:args=[--force] [--limits-only]
+# omarchy:hidden=true
+"""Collect Hermes Agent usage into the same JSON record the agents panel uses.
+
+Local stats come from ~/.hermes/state.db (sessions, user messages, and
+session_model_usage). Plan and prepaid balance come from Nous Portal
+GET /api/oauth/account using the already-signed-in token in
+~/.hermes/auth.json. The token is only sent in an HTTP header; this
+command never writes credentials.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sqlite3
+import stat
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "hermes"
+AGENT_NAME = "Hermes"
+AUTH_HELP = "Run `hermes model` to restore Nous Portal usage."
+PORTAL_HOST = "portal.nousresearch.com"
+ACCOUNT_URL = "https://portal.nousresearch.com/api/oauth/account"
+MAX_AUTH_BYTES = 65536
+MAX_HTTP_BYTES = 1_048_576
+HTTP_TIMEOUT = 12
+PROBE_MIN_INTERVAL_SECONDS = 15
+MAX_DB_BYTES = 256 * 1024 * 1024
+MAX_STATE_BYTES = 65536
+MAX_JOBS_BYTES = 1_048_576
+MAX_JOBS = 500
+MAX_RECENT_SESSIONS = 6
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+SOURCE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+END_REASON_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+UNSAFE_TEXT_RE = re.compile("[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>&]")
+
+
+def expand_path(value: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+
+
+def hermes_home() -> Path:
+    return expand_path(os.environ.get("HERMES_HOME") or "~/.hermes")
+
+
+def cache_root() -> Path:
+    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "omarchy" / "agent-usage"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def date_string(value: dt.date | None = None) -> str:
+    return (value or dt.datetime.now().date()).strftime("%Y-%m-%d")
+
+
+def recent_date_strings() -> list[str]:
+    today = dt.datetime.now().date()
+    return [date_string(today - dt.timedelta(days=offset)) for offset in range(6, -1, -1)]
+
+
+def number(value: Any) -> int:
+    try:
+        n = float(value or 0)
+        return round(n) if n == n else 0
+    except Exception:
+        return 0
+
+
+def money(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return None
+    if amount != amount:
+        return None
+    return amount
+
+
+def local_date_from_timestamp(value: Any) -> str:
+    if value is None or value == "":
+        return date_string()
+    if isinstance(value, (int, float)):
+        try:
+            seconds = float(value) / 1000.0 if float(value) > 10_000_000_000 else float(value)
+            return date_string(dt.datetime.fromtimestamp(seconds).date())
+        except Exception:
+            return date_string()
+    raw = str(value).strip()
+    try:
+        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return date_string(parsed.date())
+    except Exception:
+        return date_string()
+
+
+def empty_bucket() -> dict[str, int]:
+    return {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+    }
+
+
+def empty_stats() -> dict[str, Any]:
+    recent_dates = recent_date_strings()
+    return {
+        "todayPrompts": 0,
+        "todaySessions": 0,
+        "todayTotalTokens": 0,
+        "todayTokensByModel": {},
+        "recentDays": [{"date": day, "messageCount": 0} for day in recent_dates],
+        "modelUsage": {},
+        "totalPrompts": 0,
+        "totalSessions": 0,
+        "activeDays": 0,
+        "activeDates": [],
+    }
+
+
+def read_bounded_json(path: Path, max_bytes: int) -> dict[str, Any] | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_nlink != 1:
+            return None
+        if st.st_size > max_bytes:
+            return None
+        os.set_blocking(fd, True)
+        data = b""
+        while len(data) <= max_bytes:
+            chunk = os.read(fd, min(65536, max_bytes + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+        if len(data) > max_bytes:
+            return None
+        parsed = json.loads(data.decode("utf-8"))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+    finally:
+        os.close(fd)
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
+        tmp.chmod(0o600)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def open_state_db(path: Path) -> tuple[sqlite3.Connection, int] | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_nlink != 1:
+            os.close(fd)
+            return None
+        if st.st_size > MAX_DB_BYTES:
+            os.close(fd)
+            return None
+        con = sqlite3.connect(f"file:/proc/self/fd/{fd}?mode=ro", uri=True, timeout=2)
+        con.row_factory = sqlite3.Row
+        con.execute("pragma query_only=on")
+        con.execute("pragma busy_timeout=2000")
+        return con, fd
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+def close_state_db(opened: tuple[sqlite3.Connection, int] | None) -> None:
+    if opened is None:
+        return
+    con, fd = opened
+    try:
+        con.close()
+    except Exception:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def model_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    return raw if raw else "hermes"
+
+
+def clean_text(value: Any, limit: int) -> str:
+    text = UNSAFE_TEXT_RE.sub("", str(value or "")).strip()
+    return text[:limit]
+
+
+def epoch_seconds(value: Any) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if n != n or n <= 0:
+        return 0.0
+    return n / 1000.0 if n > 10_000_000_000 else n
+
+
+def iso_from_epoch(value: Any) -> str:
+    seconds = epoch_seconds(value)
+    if not seconds:
+        return ""
+    try:
+        return dt.datetime.fromtimestamp(seconds, dt.timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def session_cost(row: sqlite3.Row, cols: set[str]) -> float:
+    for col in ("actual_cost_usd", "estimated_cost_usd"):
+        if col in cols:
+            amount = money(row[col])
+            if amount is not None and amount >= 0:
+                return amount
+    return 0.0
+
+
+def scan_recent_sessions(con: sqlite3.Connection, cols: set[str]) -> tuple[list[dict[str, Any]], float, float]:
+    """Newest top-level sessions for the panel, plus cost by last activity."""
+    wanted = ["id", "title", "source", "model", "message_count", "started_at",
+              "last_activity_at", "ended_at", "pinned", "parent_session_id",
+              "actual_cost_usd", "estimated_cost_usd"]
+    select = ", ".join(c for c in wanted if c in cols)
+    where = "coalesce(archived, 0)=0 and coalesce(hidden, 0)=0"
+    if "parent_session_id" in cols:
+        where += " and coalesce(parent_session_id, '')=''"
+    today = date_string()
+    week = set(recent_date_strings())
+    week_start = min(week)
+    today_cost = 0.0
+    week_cost = 0.0
+    recent: list[dict[str, Any]] = []
+    order = "coalesce(last_activity_at, started_at)" if "last_activity_at" in cols else "started_at"
+    for row in con.execute(f"select {select} from sessions where {where} order by {order} desc"):
+        activity = row["last_activity_at"] if "last_activity_at" in cols else None
+        day = local_date_from_timestamp(activity or row["started_at"])
+        cost = session_cost(row, cols)
+        if day == today:
+            today_cost += cost
+        if day in week:
+            week_cost += cost
+        if len(recent) >= MAX_RECENT_SESSIONS:
+            # Rows arrive newest first: past the week there is no cost left to count.
+            if day < week_start:
+                break
+            continue
+        sid = str(row["id"] or "")
+        if not SESSION_ID_RE.fullmatch(sid):
+            continue
+        source = str(row["source"] or "").lower() if "source" in cols else ""
+        recent.append({
+            "id": sid,
+            "title": clean_text(row["title"] if "title" in cols else "", 80) or "Untitled session",
+            "source": source if SOURCE_RE.fullmatch(source) else "cli",
+            "model": clean_text(row["model"] if "model" in cols else "", 64),
+            "messages": number(row["message_count"]) if "message_count" in cols else 0,
+            "lastActivityAt": iso_from_epoch(activity or row["started_at"]),
+            "open": "ended_at" in cols and row["ended_at"] is None,
+            "pinned": "pinned" in cols and bool(row["pinned"]),
+            "costUsd": round(cost, 4),
+        })
+    return recent, round(today_cost, 4), round(week_cost, 4)
+
+
+def running_workers(con: sqlite3.Connection) -> int:
+    """Delegated workers Hermes itself would treat as live: running or
+    finalizing, with the owning process still the same process."""
+    cols = {str(row[1]) for row in con.execute("pragma table_info(async_delegations)")}
+    if not {"state", "owner_pid"} <= cols:
+        return 0
+    started = "owner_started_at" if "owner_started_at" in cols else "null"
+    count = 0
+    for row in con.execute(
+        f"select owner_pid, {started} from async_delegations "
+        "where state in ('running', 'finalizing') limit 1000"
+    ):
+        pid, start = row[0], row[1]
+        if not isinstance(pid, int) or not 1 < pid < 4_194_304:
+            continue
+        ticks = process_start_ticks(pid)
+        if ticks is not None and (not isinstance(start, int) or start == ticks):
+            count += 1
+    return count
+
+
+def last_ended_session(con: sqlite3.Connection, cols: set[str]) -> dict[str, str]:
+    """Why and when the newest top-level session ended."""
+    if not {"ended_at", "end_reason"} <= cols:
+        return {"reason": "", "at": ""}
+    where = "ended_at is not null and coalesce(end_reason, '')!=''"
+    if "parent_session_id" in cols:
+        where += " and coalesce(parent_session_id, '')=''"
+    row = con.execute(
+        f"select end_reason, ended_at from sessions where {where} order by ended_at desc limit 1"
+    ).fetchone()
+    if row is None:
+        return {"reason": "", "at": ""}
+    reason = str(row["end_reason"] or "").lower()
+    return {
+        "reason": reason if END_REASON_RE.fullmatch(reason) else "",
+        "at": iso_from_epoch(row["ended_at"]),
+    }
+
+
+def scan_state_db(home: Path) -> dict[str, Any]:
+    stats = empty_stats()
+    today = date_string()
+    recent_dates = recent_date_strings()
+    recent = {day: 0 for day in recent_dates}
+    opened = open_state_db(home / "state.db")
+    if opened is None:
+        return stats
+    con, _fd = opened
+    try:
+        tables = {
+            str(row[0])
+            for row in con.execute("select name from sqlite_master where type='table'")
+        }
+        sessions: set[str] = set()
+        today_sessions: set[str] = set()
+        active_days: set[str] = set()
+
+        if "sessions" in tables:
+            for row in con.execute(
+                "select id, started_at, last_activity_at from sessions "
+                "where coalesce(archived, 0)=0 and coalesce(hidden, 0)=0"
+            ):
+                sid = str(row["id"] or "")
+                if not sid:
+                    continue
+                sessions.add(sid)
+                day = local_date_from_timestamp(row["last_activity_at"] or row["started_at"])
+                active_days.add(day)
+                if day == today:
+                    today_sessions.add(sid)
+
+        if "messages" in tables:
+            message_cols = {str(row[1]) for row in con.execute("pragma table_info(messages)")}
+            where = "role='user'"
+            if "active" in message_cols:
+                where += " and coalesce(active, 1)=1"
+            prompts = 0
+            today_prompts = 0
+            for row in con.execute(f"select timestamp from messages where {where}"):
+                prompts += 1
+                day = local_date_from_timestamp(row["timestamp"])
+                active_days.add(day)
+                if day == today:
+                    today_prompts += 1
+            stats["todayPrompts"] = today_prompts
+            stats["totalPrompts"] = prompts
+
+        if "session_model_usage" in tables:
+            today_total = 0
+            for row in con.execute(
+                "select model, input_tokens, output_tokens, cache_read_tokens, "
+                "cache_write_tokens, last_seen from session_model_usage"
+            ):
+                model = model_name(row["model"])
+                input_tokens = number(row["input_tokens"])
+                output_tokens = number(row["output_tokens"])
+                cache_read = number(row["cache_read_tokens"])
+                cache_write = number(row["cache_write_tokens"])
+                total = input_tokens + output_tokens + cache_read + cache_write
+                if total <= 0:
+                    continue
+                bucket = stats["modelUsage"].setdefault(model, empty_bucket())
+                bucket["inputTokens"] += input_tokens
+                bucket["outputTokens"] += output_tokens
+                bucket["cacheReadInputTokens"] += cache_read
+                bucket["cacheCreationInputTokens"] += cache_write
+                day = local_date_from_timestamp(row["last_seen"])
+                active_days.add(day)
+                if day in recent:
+                    recent[day] += total
+                if day == today:
+                    today_total += total
+                    stats["todayTokensByModel"][model] = stats["todayTokensByModel"].get(model, 0) + total
+            stats["todayTotalTokens"] = today_total
+
+        if "sessions" in tables:
+            cols = {str(row[1]) for row in con.execute("pragma table_info(sessions)")}
+            if "id" in cols and "started_at" in cols:
+                recent_sessions, today_cost, week_cost = scan_recent_sessions(con, cols)
+                stats["recentSessions"] = recent_sessions
+                stats["todayCostUsd"] = today_cost
+                stats["weekCostUsd"] = week_cost
+                stats["lastEnded"] = last_ended_session(con, cols)
+
+        if "async_delegations" in tables:
+            stats["runningWorkers"] = running_workers(con)
+
+        stats["todaySessions"] = len(today_sessions)
+        stats["totalSessions"] = len(sessions)
+        stats["activeDays"] = len(active_days)
+        stats["activeDates"] = sorted(active_days)
+        stats["recentDays"] = [{"date": day, "messageCount": recent[day]} for day in recent_dates]
+        return stats
+    finally:
+        close_state_db(opened)
+
+
+def process_start_ticks(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            raw = handle.read(4096)
+        fields = raw.rsplit(b")", 1)[1].split()
+        return int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def gateway_status(home: Path) -> dict[str, Any]:
+    """Running only when the recorded pid is alive and is the same process
+    (start time matches), so a reused pid never reads as a live gateway."""
+    state = read_bounded_json(home / "gateway_state.json", MAX_STATE_BYTES) or {}
+    pid = state.get("pid")
+    recorded = str(state.get("gateway_state") or "")
+    alive = False
+    if isinstance(pid, int) and not isinstance(pid, bool) and 1 < pid < 4_194_304:
+        ticks = process_start_ticks(pid)
+        start = state.get("start_time")
+        alive = ticks is not None and (not isinstance(start, int) or start == ticks)
+    active = state.get("active_agents")
+    return {
+        "state": "running" if alive and recorded in ("running", "") else ("stopped" if not alive else clean_text(recorded, 24)),
+        "activeAgents": active if isinstance(active, int) and 0 <= active < 10_000 else 0,
+    }
+
+
+def estop_engaged(home: Path) -> bool:
+    try:
+        os.lstat(home / "ESTOP")
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def cron_status(home: Path) -> dict[str, Any]:
+    data = read_bounded_json(home / "cron" / "jobs.json", MAX_JOBS_BYTES)
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    result: dict[str, Any] = {"jobs": 0, "active": 0, "failing": 0, "nextRunAt": ""}
+    if not isinstance(jobs, list):
+        return result
+    next_run: dt.datetime | None = None
+    for job in jobs[:MAX_JOBS]:
+        if not isinstance(job, dict):
+            continue
+        result["jobs"] += 1
+        paused = str(job.get("state") or "") == "paused" or bool(job.get("paused_at"))
+        if job.get("enabled", True) is False or paused:
+            continue
+        result["active"] += 1
+        if job.get("last_status") == "error":
+            result["failing"] += 1
+        raw = job.get("next_run_at")
+        if not isinstance(raw, str) or len(raw) > 64:
+            continue
+        try:
+            when = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.astimezone()
+        if next_run is None or when < next_run:
+            next_run = when
+    if next_run is not None:
+        result["nextRunAt"] = next_run.astimezone(dt.timezone.utc).isoformat()
+    return result
+
+
+class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme != "https" or parsed.hostname != PORTAL_HOST:
+            raise urllib.error.HTTPError(newurl, code, "cross-origin redirect refused", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def nous_login(home: Path) -> dict[str, Any] | None:
+    auth = read_bounded_json(home / "auth.json", MAX_AUTH_BYTES)
+    if not isinstance(auth, dict):
+        return None
+    providers = auth.get("providers") if isinstance(auth.get("providers"), dict) else {}
+    nous = providers.get("nous") if isinstance(providers.get("nous"), dict) else None
+    if nous and str(nous.get("access_token") or "").strip():
+        return nous
+    pool = auth.get("credential_pool") if isinstance(auth.get("credential_pool"), dict) else {}
+    entries = pool.get("nous") if isinstance(pool.get("nous"), list) else []
+    best = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if not str(entry.get("access_token") or "").strip():
+            continue
+        if best is None or str(entry.get("expires_at") or "") > str(best.get("expires_at") or ""):
+            best = entry
+    return best
+
+
+def token_expired(login: dict[str, Any]) -> bool:
+    raw = str(login.get("expires_at") or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed <= dt.datetime.now(dt.timezone.utc)
+    except Exception:
+        return False
+
+
+def fetch_account(token: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        ACCOUNT_URL,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    opener = urllib.request.build_opener(SameOriginRedirectHandler)
+    with opener.open(request, timeout=HTTP_TIMEOUT) as response:
+        final = getattr(response, "geturl", lambda: ACCOUNT_URL)()
+        host = urllib.parse.urlparse(final).hostname
+        if host != PORTAL_HOST:
+            raise ValueError("redirected off the portal host")
+        body = response.read(MAX_HTTP_BYTES + 1)
+        if len(body) > MAX_HTTP_BYTES:
+            raise ValueError("account response too large")
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    if not isinstance(payload, dict):
+        raise ValueError("invalid JSON object")
+    return payload
+
+
+def parse_account(payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "limits": [],
+        "tierLabel": "",
+        "usageStatusText": "",
+        "authHelpText": "",
+        "balance": None,
+    }
+    subscription = payload.get("subscription") if isinstance(payload.get("subscription"), dict) else {}
+    access = payload.get("paid_service_access") if isinstance(payload.get("paid_service_access"), dict) else {}
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+
+    plan = str(subscription.get("plan") or "").strip()
+    account_tier = str(payload.get("account_tier") or user.get("account_tier") or "").strip()
+    monthly = money(subscription.get("monthly_credits"))
+    remaining = money(access.get("subscription_credits_remaining"))
+    if remaining is None:
+        remaining = money(subscription.get("credits_remaining"))
+    purchased = money(access.get("purchased_credits_remaining"))
+    reset = str(subscription.get("current_period_end") or "")
+    paid = access.get("paid_access")
+    if paid is None:
+        paid = access.get("allowed")
+
+    if plan:
+        result["tierLabel"] = plan
+    elif account_tier and account_tier.lower() not in ("anonymous",):
+        result["tierLabel"] = account_tier.replace("_", " ")
+    elif paid is False or not plan:
+        result["tierLabel"] = "Free"
+
+    if monthly is not None and monthly > 0 and remaining is not None:
+        spent = max(0.0, monthly - remaining)
+        percent = max(0.0, min(1.0, spent / monthly))
+        result["limits"].append({
+            "label": "Monthly credits",
+            "title": "Monthly",
+            "percent": percent,
+            "resetsAt": reset,
+        })
+
+    if purchased is not None and purchased > 0:
+        result["balance"] = {
+            "remaining": purchased,
+            "funded": purchased,
+            "spent": 0.0,
+            "currency": "USD",
+        }
+    elif monthly is not None and monthly > 0 and remaining is not None:
+        result["balance"] = {
+            "remaining": max(0.0, remaining),
+            "funded": monthly,
+            "spent": max(0.0, monthly - remaining),
+            "currency": "USD",
+        }
+
+    return result
+
+
+def collect_limits(home: Path, force: bool) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "limits": [],
+        "tierLabel": "",
+        "usageStatusText": "",
+        "authHelpText": AUTH_HELP,
+        "balance": None,
+    }
+    probe_cache = cache_root() / "hermes-limits.json"
+    cached = read_json(probe_cache) or {}
+    fallback_limits = cached.get("limits") if isinstance(cached.get("limits"), list) else []
+    fallback_tier = str(cached.get("tierLabel") or "")
+    fallback_balance = cached.get("balance") if isinstance(cached.get("balance"), dict) else None
+
+    def restore_fallback(status: str, retry: bool = False) -> dict[str, Any]:
+        result["limits"] = fallback_limits
+        result["tierLabel"] = fallback_tier or result["tierLabel"]
+        result["balance"] = fallback_balance
+        result["usageStatusText"] = status
+        if retry:
+            result["retryAdvised"] = True
+        return result
+
+    login = nous_login(home)
+    if login is None:
+        if fallback_limits or fallback_tier:
+            return restore_fallback("Sign-in missing")
+        result["usageStatusText"] = "Waiting for auth"
+        result["tierLabel"] = "Free"
+        return result
+
+    if token_expired(login):
+        return restore_fallback("Sign-in expired", retry=True)
+
+    if not force:
+        fetched_at = number(cached.get("fetchedAtMs")) / 1000.0
+        if fetched_at and 0 <= time.time() - fetched_at < PROBE_MIN_INTERVAL_SECONDS and (
+            fallback_limits or fallback_tier
+        ):
+            result["limits"] = fallback_limits
+            result["tierLabel"] = fallback_tier
+            result["balance"] = fallback_balance
+            result["authHelpText"] = ""
+            return result
+
+    token = str(login.get("access_token") or "").strip()
+    try:
+        payload = fetch_account(token)
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            return restore_fallback("Sign-in expired")
+        return restore_fallback("Nous Portal unavailable", retry=True)
+    except Exception:
+        return restore_fallback("Nous Portal unavailable", retry=True)
+
+    parsed = parse_account(payload)
+    result.update(parsed)
+    result["authHelpText"] = ""
+    try:
+        write_json(probe_cache, {
+            "fetchedAtMs": int(time.time() * 1000),
+            "limits": result["limits"],
+            "tierLabel": result["tierLabel"],
+            "balance": result["balance"],
+        })
+    except Exception:
+        pass
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Print the Hermes usage record as JSON")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--limits-only", action="store_true")
+    args = parser.parse_args()
+
+    home = hermes_home()
+    stats = scan_state_db(home)
+    limits = collect_limits(home, args.force)
+    has_data = number(stats.get("totalPrompts")) > 0 or number(stats.get("totalSessions")) > 0
+    has_limits = len(limits["limits"]) > 0 or limits.get("balance") is not None
+
+    record = {
+        "schemaVersion": 1,
+        "id": AGENT_ID,
+        "name": AGENT_NAME,
+        "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "ready": has_data or has_limits or bool(limits.get("tierLabel")),
+        "hasLocalStats": True,
+        "hasPromptStats": True,
+        "tierLabel": limits["tierLabel"] or "Free",
+        "usageStatusText": limits["usageStatusText"],
+        "authHelpText": limits["authHelpText"],
+        "limits": limits["limits"],
+    }
+    if limits.get("retryAdvised"):
+        record["retryAdvised"] = True
+    if limits.get("balance") is not None:
+        record["balance"] = limits["balance"]
+    record.update(stats)
+    record["hermes"] = {
+        "gateway": gateway_status(home),
+        "paused": estop_engaged(home),
+        "cron": cron_status(home),
+        "recentSessions": record.pop("recentSessions", []),
+        "todayCostUsd": record.pop("todayCostUsd", 0.0),
+        "weekCostUsd": record.pop("weekCostUsd", 0.0),
+        "runningWorkers": record.pop("runningWorkers", 0),
+        "lastEnded": record.pop("lastEnded", {"reason": "", "at": ""}),
+    }
+    print(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

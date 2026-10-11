@@ -198,6 +198,7 @@ monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "nor
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "show_hint=false hides the ? affordance (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
 
+<<<<<<< HEAD
 echo "== omarchy plugin add: first-load install (--from-shell)"
 setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"
 P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json"); mkdir -p "$(dirname "$P")"; cp -r "$ROOT" "$P"   # what `omarchy plugin add` does
@@ -212,6 +213,82 @@ check "second load is a no-op" "! grep -q . $FAKE/calls"
 setup_world; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"; bash "$ROOT/install.sh" --yes --no-restart >/dev/null 2>&1
 P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json")
 check "checkout install copies manifest + plugin/ only (no install.sh -> panel hook no-ops)" "[[ -f $P/manifest.json && -f $P/plugin/Switcher.qml && ! -e $P/install.sh ]]"
+=======
+echo "== send to agent"
+setup_world; monitors 1; echo "B" > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+sed -i 's/^B | class.b | agent-b/B | class.b | omarchy-launch-tui --app-id=class.b agent-b/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+clients "class.a:0xa1:-833" "class.b:0xb1:243"
+printf 'secret selected text' > "$FAKE/primary"; : > "$FAKE/wtype"
+$OA send; sleep 1.2
+check "send copies the primary selection" "grep -q 'selected text' $FAKE/copied"
+check "send pastes with Ctrl+Shift+V into a TUI agent" "grep -q -- '-M ctrl -M shift v' $FAKE/wtype"
+check "selected text is never logged" "! grep -q 'secret selected' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm "$FAKE/primary"; printf 'clip' > "$FAKE/clipboard"; : > "$FAKE/wtype"
+$OA send; sleep 1.2
+check "falls back to clipboard; Ctrl+V for a GUI agent" "grep -q clip $FAKE/copied && grep -qx -- '-M ctrl v -m ctrl' $FAKE/wtype"
+echo "send_key = SUPER + CTRL + S" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; echo "shot_key = SUPER + CTRL + D" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+$OA rules >/dev/null 2>&1
+check "send/shot binds generated" "grep -q 'Send selection to agent' $R && grep -q 'Send screenshot to agent' $R"
+: > "$FAKE/shell"; $OA shortcuts; sleep 0.5
+check "send/shot keys in cheat sheet" "grep summon $FAKE/shell | tail -1 | grep -q 'Send a region screenshot'"
+
+echo "== send --text / send-files"
+: > "$FAKE/wtype"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+$OA send --text "hello agent"; sleep 1.2
+check "send --text pastes given text" "grep -q 'hello agent' $FAKE/copied"
+echo piped | $OA send --text -; sleep 1.2
+check "send --text - reads stdin" "grep -q piped $FAKE/copied"
+mkdir -p "$T/files"; printf x > "$T/files/a b.txt"; printf x > "$T/files/c.txt"; printf PNG > "$T/files/pic.png"
+$OA send-files A "$T/files/a b.txt" "$T/files/c.txt"; sleep 1.2
+check "GUI: files as text/uri-list, percent-encoded" "grep -q 'type=text/uri-list' $FAKE/copied && grep -q 'file://.*/a%20b.txt' $FAKE/copied"
+$OA send-files A "$T/files/pic.png"; sleep 1.2
+check "GUI: single image as image data" "grep -q 'type=image/png' $FAKE/copied"
+$OA send-files B "$T/files/a b.txt"; sleep 1.2
+check "TUI: quoted path pasted" "grep -q 'type=text' $FAKE/copied && grep -qF 'a\\ b.txt' $FAKE/copied"
+$OA send-files Nope "$T/files/c.txt" 2>/dev/null; check "send-files unknown agent fails" "(( \$? != 0 ))"
+
+echo "== send-shot"
+: > "$FAKE/wtype"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; $OA send-shot; sleep 1.2
+check "shot saved under state/shots" "ls $XDG_STATE_HOME/omarchy-agent-switcher/shots/shot-*.png >/dev/null"
+check "GUI agent gets the image on the clipboard" "grep -q 'type=image/png' $FAKE/copied && grep -q PNGDATA $FAKE/copied"
+echo B > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; $OA send-shot; sleep 1.2
+check "TUI agent gets the file path" "grep -q 'type=text' $FAKE/copied && grep -q 'shots/shot-' $FAKE/copied"
+
+echo "== usage meter"
+setup_world; monitors 1; clients "class.a:0xa1:243"
+sed -i 's/^A | class.a | agent-a | SUPER + SHIFT + A |/A | class.a | agent-a | SUPER + SHIFT + A | | grok/; s/^C | class.c | agent-c | |/C | class.c | agent-c | | | claude/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+U=$HOME/.local/state/omarchy/agents/usage; mkdir -p "$U"
+echo '{"id":"grok","ready":true,"token":"sk-SECRET","limits":[{"title":"Weekly","percent":0.42},{"title":"Daily","percent":0.95}]}' > "$U/grok.json"
+echo '{"id":"claude","limits":[{"title":"5h","percent":0.3}]}' > "$U/claude.json"
+J=$($OA usage --print)
+check "highest limit per provider" "[[ \$(jq -r .grok.p <<<\"\$J\") == 0.95 && \$(jq -r .grok.t <<<\"\$J\") == 'Daily 95%' ]]"
+check "tokens never surface" "[[ \$J != *SECRET* ]]"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5; P=$(grep summon "$FAKE/shell" | tail -1)
+check "payload carries per-tab usage" "[[ \$P == *'\"name\":\"A\"'*'\"usage\":0.95'* && \$P == *'\"name\":\"C\"'*'\"usage\":0.3'* ]]"
+check "agent without provider record = -1" "[[ \$P == *'\"name\":\"B\"'*'\"usage\":-1'* ]]"
+check "thresholds + display sent" "[[ \$P == *'\"usageDisplay\":\"fill\"'*'\"usageWarn\":0.7'* ]]"
+mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher/collectors"; printf '#!/bin/sh\necho ran >> "$FAKE/collect"; echo TOKEN-LEAK\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/collectors/refresh"; chmod +x "$XDG_DATA_HOME/omarchy-agent-switcher/collectors/refresh"
+rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/usage.stamp"; $OA usage; sleep 0.5; $OA usage; sleep 0.5
+check "collectors run lazily, once per refresh window" "[[ \$(wc -l < $FAKE/collect) == 1 ]]"
+$OA usage --force; sleep 0.5; check "--force refreshes" "[[ \$(wc -l < $FAKE/collect) == 2 ]]"
+check "collector output never logged" "! grep -q TOKEN-LEAK $XDG_STATE_HOME/omarchy-agent-switcher/log"
+echo "usage_display = off" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "usage_display=off -> no usage" "[[ \$($OA usage --print) == '{}' ]]"
+
+echo "== install / uninstall with --with-nautilus (stubs)"
+setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"
+bash "$ROOT/install.sh" --yes --with-nautilus --no-restart >"$T/inst" 2>&1; rc=$?; : "$rc"
+check "install succeeds" "(( rc == 0 ))" || cat "$T/inst"
+check "require line added" "grep -qx 'require(\"hypr.agent-switcher\")' $XDG_CONFIG_HOME/hypr/hyprland.lua"
+check "nautilus extension installed" "[[ -f $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py ]]"
+check "send-files desktop entry installed" "grep -q 'send-files - %F' $XDG_DATA_HOME/applications/omarchy-agents-send.desktop"
+check "collectors installed" "[[ -x $XDG_DATA_HOME/omarchy-agent-switcher/collectors/refresh ]]"
+bash "$ROOT/install.sh" --yes --no-restart >/dev/null 2>&1
+check "re-install idempotent (one require line)" "[[ \$(grep -c 'agent-switcher' $XDG_CONFIG_HOME/hypr/hyprland.lua) == 2 ]]"
+bash "$ROOT/uninstall.sh" >/dev/null 2>&1
+check "uninstall restores hyprland.lua" "[[ \$(cat $XDG_CONFIG_HOME/hypr/hyprland.lua) == '-- user config' ]]"
+check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py && ! -e $XDG_DATA_HOME/applications/omarchy-agents-send.desktop ]]"
+>>>>>>> d1a1a1f (v1.2: send to agent (send/send-shot/send-files, Nautilus menu), usage meter with vendored auxxed collectors; tests + docs)
 
 echo
 echo "passed: $PASS  failed: $FAILN"

@@ -24,6 +24,10 @@ Item {
   property string menuFor: ""              // agent whose right-click menu is open
   property var shortcuts: []               // [{ keys, action }] generated from the live config
   property bool sheet: false               // cheat-sheet overlay
+  property string usageDisplay: "fill"     // fill | percent | off
+  property real usageWarn: 0.7
+  property real usageCrit: 0.9
+  property real usageRefreshMin: 10
 
   readonly property color fg: Color.foreground
   readonly property color bg: Color.background
@@ -45,6 +49,10 @@ Item {
       if (p.hint !== undefined) hint = p.hint
       if (p.shortcuts) shortcuts = p.shortcuts
       sheet = p.sheet === true
+      if (p.usageDisplay) usageDisplay = p.usageDisplay
+      if (p.usageWarn !== undefined) usageWarn = p.usageWarn
+      if (p.usageCrit !== undefined) usageCrit = p.usageCrit
+      if (p.usageRefreshMin) usageRefreshMin = p.usageRefreshMin
       opened = true
       lastShow = Date.now()
     } catch (e) {}
@@ -70,6 +78,11 @@ Item {
     finishInstall.command = ["bash", "-c", 'if [ -f "$1" ]; then exec "$1" --from-shell; fi', "agent-switcher", script]
     finishInstall.running = true
   }
+
+  // Usage meter colour: accent below usage_warn, amber to usage_crit, red above.
+  function usageColor(u) { return u >= usageCrit ? "#E5534B" : (u >= usageWarn ? "#E3A23B" : accent) }
+  // Refresh usage every usage_refresh_min while open (the script caches and rate-limits).
+  Timer { interval: Math.max(1, root.usageRefreshMin) * 60000; repeat: true; running: root.opened && root.usageDisplay !== "off"; onTriggered: root.run(["usage"]) }
 
   // Auto-hide: when focus leaves special:agents (link opened a browser, user
   // clicked another app or workspace) the script hides panel + strip together.
@@ -203,8 +216,21 @@ Item {
             border.width: (sel && strip.activeFocus) ? 2 : ((!sel && ma.containsMouse) ? 1 : 0)
             border.color: (sel && strip.activeFocus) ? root.fg : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
             Behavior on color { ColorAnimation { duration: 140 } }
+            readonly property real usage: modelData.usage === undefined ? -1 : modelData.usage
+            readonly property bool hasUsage: usage >= 0 && root.usageDisplay !== "off"
+            clip: true
+            // usage fill, left to right behind the label
+            Rectangle {
+              visible: tab.hasUsage && root.usageDisplay === "fill"
+              anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+              width: parent.width * Math.min(1, Math.max(0, tab.usage))
+              radius: parent.radius
+              color: root.usageColor(tab.usage)
+              opacity: tab.sel ? 0.45 : 0.3
+              Behavior on width { NumberAnimation { duration: 300 } }
+            }
             Accessible.role: Accessible.PageTab
-            Accessible.name: modelData.name + (st === "starting" ? ", starting" : st === "stopped" ? ", not started" : "")
+            Accessible.name: modelData.name + (st === "starting" ? ", starting" : st === "stopped" ? ", not started" : "") + (hasUsage ? ", " + (modelData.usageLabel || Math.round(usage * 100) + "% used") : "")
             Accessible.selected: sel
             Row {
               id: content
@@ -221,6 +247,7 @@ Item {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
+                      + (tab.hasUsage && (root.usageDisplay === "percent" || ma.containsMouse) ? "  " + Math.round(tab.usage * 100) + "%" : "")
                 color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
                 font.family: Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal

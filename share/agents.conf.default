@@ -15,9 +15,15 @@ dim = true                  # dim the desktop behind the active agent
 show_hint = true           # "? shortcuts" button on the strip (runtime: omarchy-agents hint on/off/toggle)
 prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
 next_key = SUPER + ALT + RIGHT
+# send_key = SUPER + CTRL + S    # paste selected text into the agent (default unbound)
+# shot_key = SUPER + CTRL + D    # region screenshot into the agent (default unbound)
+usage_display = fill        # usage meter on tabs: fill | percent | off
+usage_warn = 0.70
+usage_crit = 0.90
+usage_refresh_min = 10
 # shortcuts_key = SUPER + SLASH   # optional global bind for the cheat sheet (default unbound)
 # start_hidden = grok-bot  # comma list of window classes to launch hidden at login
-# ---- agents: name | window class | launch | direct key (optional) | icon (optional) ----
+# ---- agents: name | window class | launch | direct key (optional) | icon (optional) | usage provider (optional) ----
 # Agents whose program isn't installed are skipped automatically.
 Grok Bot   | grok-bot              | uwsm-app -- grok-bot | SUPER + SHIFT + A | grok-bot
 Grok Build | org.omarchy.grokbuild | omarchy-launch-tui --app-id=org.omarchy.grokbuild grok | SUPER + ALT + A | grok

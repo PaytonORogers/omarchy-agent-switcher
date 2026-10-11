@@ -9,9 +9,10 @@
 #   omarchy-agents close|restart <name>              manage an agent window
 #   omarchy-agents reset-size [name|all]             forget sizes saved from resizing
 #   omarchy-agents shortcuts                         show the cheat sheet
+#   omarchy-agents send [--text T] | send-shot | send-files <agent|-> <path>... | usage [--force]
 #   omarchy-agents hide | autohide | list | rules [--reload] | setup [--yes] | doctor | hint on|off|toggle | version
 set -u
-VERSION=1.1.0
+VERSION=1.2.0
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-agent-switcher
@@ -41,8 +42,8 @@ find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 # ---------- config ----------------------------------------------------------
 declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
   [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" )
-names=(); classes=(); cmds=(); keys=(); icons=(); all_names=(); conf_warnings=()
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [send_key]="" [shot_key]="" [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 )
+names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); conf_warnings=()
 # Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
 program_of() {
   local -a t; read -r -a t <<<"$1"; local x i=0
@@ -68,13 +69,14 @@ load_conf() {
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ $line == *"|"* ]]; then
-      IFS='|' read -r n c l k ic <<<"$line"
-      n=$(trim "$n"); c=$(trim "$c"); l=$(trim "$l"); k=$(trim "${k:-}"); ic=$(trim "${ic:-}")
+      IFS='|' read -r n c l k ic pv <<<"$line"
+      n=$(trim "$n"); c=$(trim "$c"); l=$(trim "$l"); k=$(trim "${k:-}"); ic=$(trim "${ic:-}"); pv=$(trim "${pv:-}")
+      [[ -n $pv && ! $pv =~ ^[A-Za-z0-9._-]+$ ]] && { conf_warnings+=("invalid provider '$pv' for '$n'"); pv=""; }
       [[ -z $n || -z $c || -z $l ]] && continue
       valid_class "$c" || { conf_warnings+=("invalid window class '$c' for '$n' (allowed: letters, digits, . _ -); tab skipped"); continue; }
       [[ -n $k ]] && ! valid_key "$k" && { conf_warnings+=("invalid key '$k' for '$n'; key ignored"); k=""; }
       all_names+=("$n"); available "$l" || continue
-      names+=("$n"); classes+=("$c"); cmds+=("$l"); keys+=("$k"); icons+=("$ic")
+      names+=("$n"); classes+=("$c"); cmds+=("$l"); keys+=("$k"); icons+=("$ic"); providers+=("$pv")
     elif [[ $line == *=* ]]; then
       key=$(trim "${line%%=*}"); v=$(trim "${line#*=}"); v=$(trim "${v%%[[:space:]]#*}")
       [[ -v S[$key] ]] || conf_warnings+=("unknown setting '$key'")
@@ -82,7 +84,7 @@ load_conf() {
       S[$key]=$v
     fi
   done < "$CONF"
-  local kk; for kk in toggle_key prev_key next_key shortcuts_key; do valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
+  local kk; for kk in toggle_key prev_key next_key shortcuts_key send_key shot_key; do valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
   [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
   return 0
 }
@@ -113,6 +115,8 @@ gen_rules() {
     fi
     echo "local function ab(key, desc, cmd) pcall(hl.unbind, key); o.bind(key, desc, cmd) end"
     [[ -n ${S[toggle_key]} ]] && echo "ab(\"$(lq "${S[toggle_key]}")\", \"Agent switcher\", \"$(lq "$SELF") toggle\")"
+    [[ -n ${S[send_key]} ]] && echo "ab(\"$(lq "${S[send_key]}")\", \"Send selection to agent\", \"$(lq "$SELF") send\")"
+    [[ -n ${S[shot_key]} ]] && echo "ab(\"$(lq "${S[shot_key]}")\", \"Send screenshot to agent\", \"$(lq "$SELF") send-shot\")"
     [[ -n ${S[shortcuts_key]} ]] && echo "ab(\"$(lq "${S[shortcuts_key]}")\", \"Agent switcher shortcuts\", \"$(lq "$SELF") shortcuts\")"
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"$(lq "${keys[$i]}")\", \"$(lq "${names[$i]}") (agent switcher)\", \"$(lq "$SELF") direct ${classes[$i]}\")"; done
     local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
@@ -372,6 +376,96 @@ ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in ba
 }
 dim_on() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; return 0; }
 show_hint() { local v=${S[show_hint]:-true}; [[ $v == true || $v == on || $v == 1 ]]; }
+# ---------- usage meter (collectors vendored from auxxed/omarchy-agents, MIT) --
+USAGE_DIR=$HOME/.local/state/omarchy/agents/usage
+provider_of() { # usage provider for agent <idx>: 6th config field, else guessed from class/launch line
+  local i=$1 p=${providers[$1]:-} x; [[ -n $p ]] && { echo "$p"; return; }
+  x="${classes[$i]} ${cmds[$i]}"; x=${x,,}
+  case $x in grok-bot*|*" grok-bot"*|*/grok-bot*) echo grok-bot ;; *claude*) echo claude ;; *codex*) echo codex ;; *hermes*) echo hermes ;;
+    *gemini*) echo gemini ;; *opencode*) echo opencode ;; *grok*) echo grok ;; *) echo "" ;; esac
+}
+usage_json() { # {provider: {p: highest limit fraction 0..1, t: "label pct"}} from the usage records; never prints tokens
+  [[ ${S[usage_display]} == off ]] && { echo '{}'; return; }
+  local -a f=(); local i p; for i in "${!names[@]}"; do p=$(provider_of "$i"); [[ -n $p && -f $USAGE_DIR/$p.json && ! -L $USAGE_DIR/$p.json ]] && f+=("$USAGE_DIR/$p.json"); done
+  (( ${#f[@]} )) || { echo '{}'; return; }
+  jq -cs '[ .[] | select(type=="object" and (.id|type)=="string") | . as $r
+      | ([.limits[]? | select((.percent|type)=="number" and .percent >= 0)] | max_by(.percent)) as $m
+      | select($m != null) | {key: $r.id, value: {p: ([$m.percent,1]|min), t: "\($m.title // $m.label // "usage") \(($m.percent*100)|round)%"}} ] | from_entries' "${f[@]}" 2>/dev/null || echo '{}'
+}
+usage_refresh() { # usage_refresh [--force]: run collectors in the background at most every usage_refresh_min
+  [[ ${S[usage_display]} == off ]] && return 0
+  local stamp=$STATE/usage.stamp min; min=$(num "${S[usage_refresh_min]}" 10)
+  if [[ ${1:-} != --force && -f $stamp ]] && (( $(date +%s) - $(stat -c %Y "$stamp") < ${min%.*} * 60 )); then return 0; fi
+  local r=$DATA/collectors/refresh; [[ -x $r ]] || { log "usage: collectors not installed"; return 0; }
+  command -v python3 >/dev/null || return 0
+  touch "$stamp"; log "usage: refreshing"
+  # Collector output can contain account details: stdout/stderr are discarded, never logged.
+  local -a fa=(); [[ ${1:-} == --force ]] && fa=(--force)
+  ( timeout 120 "$r" "${fa[@]}" >/dev/null 2>&1; timeout 2 omarchy-shell -q agentswitcher refresh >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
+}
+
+# ---------- send to agent ---------------------------------------------------
+kind_of() { case ${cmds[$1]} in *launch-tui*|*alacritty*|*ghostty*|*kitty*|*foot*|*xdg-terminal-exec*) echo tui ;; *) echo gui ;; esac; }
+paste_into() { # paste_into <idx> <tui|gui>: background — wait for the window, focus it, send the paste keystroke
+  local i=$1 kind=$2 c=${classes[$1]}
+  ( a=""; for _ in $(seq $((LAUNCH_TIMEOUT * 3))); do
+      a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c))|.address // empty'); [[ -n $a ]] && break; sleep 0.33; done
+    is_addr "$a" || { notify-send -a "Agent switcher" "Couldn't paste: ${names[$i]} has no window" 2>/dev/null; exit 0; }
+    sleep 0.3
+    hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end)" >/dev/null 2>&1; sleep 0.1
+    if command -v wtype >/dev/null; then
+      if [[ $kind == tui ]]; then wtype -M ctrl -M shift v -m shift -m ctrl; else wtype -M ctrl v -m ctrl; fi
+    elif command -v ydotool >/dev/null; then
+      if [[ $kind == tui ]]; then ydotool key 29:1 42:1 47:1 47:0 42:0 29:0; else ydotool key 29:1 47:1 47:0 29:0; fi
+    else
+      hyprctl dispatch sendshortcut "$([[ $kind == tui ]] && echo 'CTRL SHIFT' || echo CTRL), V, address:$a" >/dev/null 2>&1
+    fi
+    log "send: pasted into ${names[$i]} ($kind)" ) 9>&- >/dev/null 2>&1 &
+}
+target_idx() { local i; i=$(idx_of "$last"); echo "${i:-0}"; }
+show_target() { local i=$1; if visible; then switch_to "$i"; else open_idx "$i"; fi; }
+send_text() { # send [--text <text>|-]: given text, else primary selection, else clipboard
+  command -v wl-copy >/dev/null || die "send needs wl-clipboard (wl-paste / wl-copy)"
+  local txt=""
+  if [[ ${1:-} == --text ]]; then if [[ ${2:--} == - ]]; then txt=$(cat); else txt=$2; fi
+  else txt=$(wl-paste -p -n 2>/dev/null); [[ -n $txt ]] || txt=$(wl-paste -n 2>/dev/null); fi
+  [[ -n $txt ]] || { notify-send -a "Agent switcher" "Nothing selected to send" 2>/dev/null; return 0; }
+  local i; i=$(target_idx)
+  printf '%s' "$txt" | wl-copy   # the agent pastes from the clipboard
+  show_target "$i"; paste_into "$i" "$(kind_of "$i")"
+  log "send: ${#txt} chars to ${names[$i]}"   # length only, never the text
+}
+send_files() { # send-files <agent|-> <path>...: GUI = uri-list (single image = image data), TUI = quoted paths
+  command -v wl-copy >/dev/null || die "send-files needs wl-clipboard"
+  local who=${1:--}; shift || true; (( $# )) || die "usage: send-files <agent|-> <path>..."
+  local i; if [[ $who == - ]]; then i=$(target_idx); else i=$(need_idx "$who") || exit 1; fi
+  local -a paths=(); local p; for p in "$@"; do p=$(readlink -f -- "$p") && [[ -e $p ]] && paths+=("$p"); done
+  (( ${#paths[@]} )) || die "send-files: no existing files given"
+  local kind; kind=$(kind_of "$i")
+  if [[ $kind == tui ]]; then printf '%q ' "${paths[@]}" | wl-copy
+  elif (( ${#paths[@]} == 1 )) && [[ ${paths[0],,} =~ \.(png|jpe?g|gif|webp)$ ]]; then
+    local ext=${paths[0]##*.}; ext=${ext,,}; [[ $ext == jpg ]] && ext=jpeg; wl-copy --type "image/$ext" < "${paths[0]}"
+  else printf '%s\n' "${paths[@]}" | jq -Rr '"file://" + (split("/") | map(@uri) | join("/"))' | wl-copy --type text/uri-list; fi
+  show_target "$i"; paste_into "$i" "$kind"; log "send-files: ${#paths[@]} file(s) -> ${names[$i]} ($kind)"
+}
+capture_region() { # capture_region <file>: grim+slurp, else Omarchy's capture helper
+  if command -v grim >/dev/null && command -v slurp >/dev/null; then local g; g=$(slurp 2>/dev/null) || return 1; grim -g "$g" "$1"
+  elif command -v omarchy-capture-region >/dev/null; then omarchy-capture-region "$1"
+  else die "send-shot needs grim + slurp (or omarchy-capture-region)"; fi
+  [[ -s $1 ]]
+}
+send_shot() {
+  command -v wl-copy >/dev/null || die "send-shot needs wl-clipboard"
+  local d=$STATE/shots f i kind; mkdir -p "$d"; f=$d/shot-$(date +%Y%m%d-%H%M%S).png
+  # the capture is interactive: release the lock so the strip stays usable meanwhile
+  flock -u 9
+  capture_region "$f" || { log "send-shot: cancelled"; return 0; }
+  flock -w 3 9 || exit 0
+  i=$(target_idx); kind=$(kind_of "$i")
+  if [[ $kind == gui ]]; then wl-copy --type image/png < "$f"; else printf '%s' "$f" | wl-copy; fi
+  show_target "$i"; paste_into "$i" "$kind"; log "send-shot: $f -> ${names[$i]} ($kind)"
+}
+
 pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; echo "$k"; }
 resize_binds() { # Omarchy's (or the user's) resizeactive binds, as "keys<TAB>action"
   hyprctl binds -j 2>/dev/null | jq -r '
@@ -386,11 +480,15 @@ shortcuts_json() { # every switcher key, generated from the live config
   for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && l+=("$(pretty "${keys[$i]}")" "${names[$i]} (open / switch / close)"); done
   [[ -n ${S[prev_key]} ]] && l+=("$(pretty "${S[prev_key]}")" "Previous agent (while open)")
   [[ -n ${S[next_key]} ]] && l+=("$(pretty "${S[next_key]}")" "Next agent (while open)")
+  [[ -n ${S[send_key]} ]] && l+=("$(pretty "${S[send_key]}")" "Send selected text to the agent")
+  [[ -n ${S[shot_key]} ]] && l+=("$(pretty "${S[shot_key]}")" "Send a region screenshot to the agent")
   [[ -n ${S[shortcuts_key]} ]] && l+=("$(pretty "${S[shortcuts_key]}")" "This cheat sheet")
   l+=("Scroll on strip" "Switch agent" "Click tab" "Switch to agent" "Right-click tab" "Restart / Close menu" "Middle-click tab" "Close agent")
   l+=("← → / Tab / 1-9" "Switch (strip focused)" "?" "Shortcuts (strip focused)" "Esc" "Close sheet / menu / panel")
   while IFS=$'	' read -r i r; do [[ -n $i ]] && l+=("$i" "Resize agent: $r (size is remembered)"); done < <(resize_binds)
   l+=("omarchy-agents reset-size" "Forget remembered agent sizes")
+  l+=("Files: right-click → Send to agent" "Nautilus (--with-nautilus) / Open With → Send to agent")
+  l+=("Selected text" "Select it, then press send_key (omarchy-agents send)")
   jq -cn '[$ARGS.positional | range(0; length; 2) as $j | {keys: .[$j], action: .[$j+1]}]' --args "${l[@]}"
 }
 payload() { # one jq call: tabs (name, icon, running, starting) + strip settings + sequence number
@@ -399,14 +497,16 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
     ic=${icons[$i]}; if [[ -z $ic ]]; then :; elif [[ $ic == /* ]]; then ic="file://$ic"
     elif [[ -f $DATA/icons/$ic.svg ]]; then ic="file://$DATA/icons/$ic.svg"; else ic="image://icon/$ic"; fi
     st=stopped; [[ -n ${ADDR[${classes[$i]}]:-} ]] && st=running; [[ -f $STATE/launch.${classes[$i]} ]] && st=starting
-    args+=("${names[$i]}" "$ic" "$st")
+    args+=("${names[$i]}" "$ic" "$st" "$(provider_of "$i")")
   done
+  local uj; uj=$(usage_json)
   jq -cn --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
     --argjson top "$(( SY - MY + TH[${classes[$1]}] + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
     --argjson hint "$(show_hint && echo true || echo false)" --argjson seq "$(date +%s%3N)" \
-    --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" \
-    '[$ARGS.positional | range(0; length; 3) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2]}] as $a
-     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet}' \
+    --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" --argjson u "$uj" \
+    --arg ud "${S[usage_display]}" --argjson uw "$(num "${S[usage_warn]}" 0.7)" --argjson uc "$(num "${S[usage_crit]}" 0.9)" --argjson ur "$(num "${S[usage_refresh_min]}" 10)" \
+    '[$ARGS.positional | range(0; length; 4) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2], usage: ($u[.[$j+3]].p // -1), usageLabel: ($u[.[$j+3]].t // "")}] as $a
+     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet,usageDisplay:$ud,usageWarn:$uw,usageCrit:$uc,usageRefreshMin:$ur}' \
     --args "${args[@]}"
 }
 # Strip updates go to the shell in the background so they never delay the slide.
@@ -428,6 +528,7 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   flush
   echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
   (( pending )) && { starting "$i"; await_window "$i"; }
+  usage_refresh
   return 0
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
@@ -494,7 +595,7 @@ case $cmd in
   hint) ( load_conf; set_hint "${2:-toggle}" ) || exit 1
         if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
           runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit 0 ;;
-  -h|--help|help) sed -n '5,12p' "$0"; exit 0 ;;
+  -h|--help|help) sed -n '5,13p' "$0"; exit 0 ;;
 esac
 runtime_init
 case $cmd in
@@ -521,6 +622,10 @@ case $cmd in
           visible && strip_show "$(idx_of "$last")" ;;
   hide)   hide_all ;;
   reset-size) reset_size "${2:-all}" ;;
+  send)   send_text "${@:2}" ;;
+  send-files) send_files "${@:2}" ;;
+  send-shot) send_shot ;;
+  usage)  usage_refresh "${2:-}"; [[ ${2:-} == --print ]] && usage_json ;;
   shortcuts) SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
   geometry) i=$(idx_of "$last"); c=${classes[$i]}   # debug: computed layout for the focused monitor
           echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(( SY - MY + TH[$c] + 10 ))" ;;
@@ -533,6 +638,6 @@ case $cmd in
             # focus on a regular window, or on nothing at all (clicked empty desktop) => leave
             if [[ $aa == - || $aa == null || -z $aa ]] || [[ $awn != "special:$WS" ]]; then hide_all; fi
           fi ;;
-  *) sed -n '5,12p' "$0" >&2; exit 2 ;;
+  *) sed -n '5,13p' "$0" >&2; exit 2 ;;
 esac
 exit 0
