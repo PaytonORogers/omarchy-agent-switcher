@@ -199,7 +199,6 @@ monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "nor
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "show_hint=false hides the ? affordance (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
 
-<<<<<<< HEAD
 echo "== omarchy plugin add: first-load install (--from-shell)"
 setup_world; rm "$HOME/.local/bin/omarchy-agents"; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"
 P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json"); mkdir -p "$(dirname "$P")"; cp -r "$ROOT" "$P"   # what `omarchy plugin add` does
@@ -214,7 +213,6 @@ check "second load is a no-op" "! grep -q . $FAKE/calls"
 setup_world; printf -- '-- user config\n' > "$XDG_CONFIG_HOME/hypr/hyprland.lua"; bash "$ROOT/install.sh" --yes --no-restart >/dev/null 2>&1
 P=$XDG_CONFIG_HOME/omarchy/plugins/$(jq -r .id "$ROOT/manifest.json")
 check "checkout install copies manifest + plugin/ only (no install.sh -> panel hook no-ops)" "[[ -f $P/manifest.json && -f $P/plugin/Switcher.qml && ! -e $P/install.sh ]]"
-=======
 echo "== send to agent"
 setup_world; monitors 1; echo "B" > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
 sed -i 's/^B | class.b | agent-b/B | class.b | omarchy-launch-tui --app-id=class.b agent-b/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
@@ -304,7 +302,6 @@ check "re-install idempotent (one require line)" "[[ \$(grep -c 'agent-switcher'
 bash "$ROOT/uninstall.sh" >/dev/null 2>&1
 check "uninstall restores hyprland.lua" "[[ \$(cat $XDG_CONFIG_HOME/hypr/hyprland.lua) == '-- user config' ]]"
 check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py && ! -e $XDG_DATA_HOME/applications/omarchy-agents-send.desktop ]]"
->>>>>>> d1a1a1f (v1.2: send to agent (send/send-shot/send-files, Nautilus menu), usage meter with vendored auxxed collectors; tests + docs)
 
 echo
 echo "passed: $PASS  failed: $FAILN"
