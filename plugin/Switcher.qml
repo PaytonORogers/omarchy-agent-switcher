@@ -68,7 +68,7 @@ Item {
     for (var i = 0; i < s.length; i++) if (s[i].name === name) return s[i]
     return s.length ? s[0] : null
   }
-  function prettyKey(k) { return (k || "").replace(/\s*\+\s*/g, "+").replace("SUPER", "Super").replace("SHIFT", "Shift").replace("ALT", "Alt").replace("CTRL", "Ctrl").replace("LEFT", "←").replace("RIGHT", "→") }
+  function prettyKey(k) { return (k || "").replace(/\s*\+\s*/g, "+").replace("SUPER", "Super").replace("SHIFT", "Shift").replace("ALT", "Alt").replace("CTRL", "Ctrl").replace("LEFT", "←").replace("RIGHT", "→").replace("SLASH", "/") }
 
   // `omarchy plugin add` clones the repo as the plugin but runs no install hook, so on
   // load we run ../install.sh --from-shell. It is a no-op once installed (marker file);

@@ -491,7 +491,7 @@ send_files() { # send-files <agent|-> <path>...: GUI = uri-list (single image = 
   else printf '%s\n' "${paths[@]}" | jq -Rr '"file://" + (split("/") | map(@uri) | join("/"))' | wlc --type text/uri-list; fi
   show_target "$i"; paste_into "$i" "$kind"; log "send-files: ${#paths[@]} file(s) -> ${names[$i]} ($kind)"
 }
-pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; echo "$k"; }
+pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; k=${k//SLASH//}; echo "$k"; }
 resize_binds() { # Omarchy's (or the user's) resizeactive binds, as "keys<TAB>action"
   hyprctl binds -j 2>/dev/null | jq -r '
     def mods: [ (if (.modmask/64|floor)%2==1 then "Super" else empty end), (if (.modmask/4|floor)%2==1 then "Ctrl" else empty end),
