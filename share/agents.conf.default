@@ -1,0 +1,22 @@
+# omarchy-agent-switcher config. Run `omarchy-agents rules` (or `setup`) after editing.
+# ---- settings (all optional) ----
+toggle_key = SUPER + A
+# accent = #9B7BD4          # strip + border colour; empty = active Omarchy theme accent
+# accent_inactive = #5E4A85 # unfocused border; empty = theme selection colour
+width = 0.62                # panel size/position as fractions of the focused monitor
+height = 0.82
+top = 0.06
+slide_ms = 250              # agent-switch slide duration
+opacity = 0.82 0.75         # active inactive
+rounding = 14
+dim = true                  # dim the desktop behind the active agent
+hint = true                 # tiny keyboard hint under the strip
+prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
+next_key = SUPER + ALT + RIGHT
+# start_hidden = grok-bot   # window class to launch hidden at login
+# ---- agents: name | window class | launch | direct key (optional) | icon (optional) ----
+# Agents whose program isn't installed are skipped automatically.
+Grok Bot   | grok-bot              | uwsm-app -- grok-bot | SUPER + SHIFT + A | grok-bot
+Grok Build | org.omarchy.grokbuild | omarchy-launch-tui --app-id=org.omarchy.grokbuild grok | SUPER + ALT + A | grok
+# Claude Code | org.omarchy.agent.claude | omarchy-launch-tui --app-id=org.omarchy.agent.claude claude | | claude
+# Codex       | org.omarchy.agent.codex  | omarchy-launch-tui --app-id=org.omarchy.agent.codex codex   | | codex
