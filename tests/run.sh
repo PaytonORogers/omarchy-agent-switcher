@@ -48,7 +48,7 @@ setup_world
 $OA rules >/dev/null 2>"$T/err"
 R=$XDG_CONFIG_HOME/hypr/agent-switcher.lua
 check "rules written" "[[ -f $R ]]"
-check "rule matches only installed agents" "grep -q '\^(class\\\\\\\\.a|class\\\\\\\\.b|class\\\\\\\\.c)\\\$' $R"
+check "rule matches only installed agents" "grep -q '(?i)\\^(class\\\\\\\\.a|class\\\\\\\\.b|class\\\\\\\\.c)\\\$' $R"
 check "missing agent has no bind" "! grep -q 'SUPER + ALT + M' $R"
 check "toggle bind points at installed copy" "grep -q \"\\\"$HOME/.local/bin/omarchy-agents toggle\\\"\" $R"
 if command -v luac >/dev/null || command -v luac5.4 >/dev/null; then L=$(command -v luac || command -v luac5.4); check "generated Lua parses" "$L -p $R"; fi
@@ -123,6 +123,25 @@ $OA autohide; check "autohide closes when nothing is focused" "evals | grep -q t
 $OA autohide; check "autohide keeps panel when an agent is focused" "! evals | grep -q toggle_special"
 date +%s%3N > "$XDG_STATE_HOME/omarchy-agent-switcher/acted"; echo '{}' > "$FAKE/activewindow.json"; : > "$FAKE/calls"
 $OA autohide; check "autohide ignores events right after our own action" "! grep -q . $FAKE/calls"
+
+echo "== cursor class case and single instance"
+setup_world
+sed -i 's/^A | class.a | agent-a/A | Cursor | cursor/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/cursor"; chmod +x "$T/agents/cursor"
+clients "cursor:0xc0:243"
+: > "$XDG_STATE_HOME/omarchy-agent-switcher/log"; : > "$FAKE/calls"
+$OA show A >/dev/null
+check "Wayland class cursor matches configured Cursor" "evals | grep -q 'address:0xc0'"
+check "matching window is not launched again" "! grep -q 'launch A:' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+echo '[{"class":"code","initialClass":"cursor","address":"0x1c1","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]}]' > "$FAKE/clients.json"
+: > "$FAKE/calls"
+$OA show A >/dev/null
+check "initialClass cursor matches configured Cursor" "evals | grep -q 'address:0x1c1'"
+clients; : > "$FAKE/calls"; : > "$XDG_STATE_HOME/omarchy-agent-switcher/log"
+bindir=$(mktemp -d); cp "$(command -v sleep)" "$bindir/cursor"; "$bindir/cursor" 30 & hold=$!
+$OA show A >/dev/null
+check "running cursor is not launched again" "grep -q 'already running' $XDG_STATE_HOME/omarchy-agent-switcher/log && ! grep -q 'launch A: $T/agents/cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+kill "$hold" 2>/dev/null || true; wait "$hold" 2>/dev/null || true; rm -rf "$bindir"
 
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
