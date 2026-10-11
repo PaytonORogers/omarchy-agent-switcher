@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # omarchy-agents — one Super+A drop-down for all your AI agents, with a tab strip.
-# https://github.com/<you>/omarchy-agent-switcher  (MIT)
+# https://github.com/PaytonORogers/omarchy-agent-switcher  (MIT)
 #
 #   omarchy-agents toggle            open/close the drop-down (last agent)
 #   omarchy-agents show <name>       open, or slide to, an agent
@@ -15,7 +15,7 @@ STATE=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-agent-switcher
 CONF=${OMARCHY_AGENTS_CONF:-$CFG_HOME/omarchy-agent-switcher/agents.conf}
 REGISTRY=$DATA/registry.conf
 RULES=$CFG_HOME/hypr/agent-switcher.lua
-PLUGIN_ID=io.github.paytonrogers.agent-switcher
+PLUGIN_ID=io.github.paytonorogers.agent-switcher
 SELF=$(readlink -f "$0")
 WS=agents
 export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"

@@ -1,2 +1,7 @@
 *.bak*
 *.tmp
+*.new
+# local/user config never belongs in the repo
+agents.conf
+!share/agents.conf.default
+*.log

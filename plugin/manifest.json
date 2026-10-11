@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.paytonrogers.agent-switcher",
+  "id": "io.github.paytonorogers.agent-switcher",
   "name": "Agent switcher",
   "version": "1.0.0",
   "description": "Tab strip for the omarchy-agents Super+A drop-down: one hotkey for every AI agent.",

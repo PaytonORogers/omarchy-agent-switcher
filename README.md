@@ -17,16 +17,17 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
 ## Install
+Requires Omarchy (Hyprland Lua config + the Omarchy shell), `jq`, and optionally `gum`.
 ```sh
-git clone https://github.com/<you>/omarchy-agent-switcher ~/Projects/omarchy-agent-switcher
-cd ~/Projects/omarchy-agent-switcher
+git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
+cd omarchy-agent-switcher
 ./install.sh          # interactive: pick + order detected agents (uses gum if present)
 ./install.sh --yes    # non-interactive: enable every detected agent
 ```
 `install.sh` can be re-run safely. It:
 - copies `omarchy-agents` to `~/.local/bin`
 - copies the registry and icons to `~/.local/share/omarchy-agent-switcher`
-- copies the plugin to `~/.config/omarchy/plugins/io.github.paytonrogers.agent-switcher`
+- copies the plugin to `~/.config/omarchy/plugins/io.github.paytonorogers.agent-switcher`
 - writes `~/.config/hypr/agent-switcher.lua` (window rules and binds)
 - adds one `require("hypr.agent-switcher")` line to `hyprland.lua` (backed up to `hyprland.lua.bak-agent-switcher`)
 - enables the plugin and restarts the shell
@@ -87,7 +88,7 @@ are restored on close. If you pick keys that already do something else, `omarchy
 `omarchy-agents hint off` hides the keyboard hint right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
 ## Troubleshooting
-- **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonrogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.
+- **No strip:** run `omarchy-agents doctor`, then `omarchy plugin enable io.github.paytonorogers.agent-switcher && omarchy-restart-shell`. Editing the QML may need a full shell restart; hot reload can fail.
 - **Agent not floating or in the wrong place:** check its real class with `hyprctl clients`, fix it in `agents.conf`, then run `omarchy-agents rules`.
 - **Agent tab shows a plain terminal or takes a while the first time:** that's the agent's own first run. For example, Omarchy's `~/.local/bin/claude` installs Claude Code with mise on first launch, which is a one-time download of ~200 MB, and Codex shows a sign-in screen until you log in. Switching never waits for a starting agent: its window pops into the panel when it's ready, and you get a "Starting …" notification.
 - **Launch lines:** `$HOME` and `~` are expanded, and bare program names are resolved against PATH plus mise shims, `~/.local/bin`, npm, bun and cargo before launching. Apps started through uwsm/systemd don't see your shell's PATH.
@@ -100,3 +101,8 @@ are restored on close. If you pick keys that already do something else, `omarchy
 - Built for Omarchy by DHH and contributors, on Hyprland and quickshell.
 - Agent icons come from [auxxed's Omarchy agents plugin](https://github.com/auxxed) (MIT).
 - Author: Payton Rogers. MIT licensed, see LICENSE.
+
+## Updating
+```sh
+cd omarchy-agent-switcher && git pull && ./install.sh   # keeps your agents.conf
+```
