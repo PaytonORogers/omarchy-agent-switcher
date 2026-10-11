@@ -3,7 +3,7 @@
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
-ID=$(jq -r .id "$SRC/plugin/manifest.json")
+ID=$(jq -r .id "$SRC/manifest.json")
 HYPR=$CFG_HOME/hypr/hyprland.lua
 MARK="-- omarchy-agent-switcher"
 # Close the drop-down first so agent windows aren't stranded off-screen.

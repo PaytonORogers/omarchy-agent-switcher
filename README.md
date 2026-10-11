@@ -18,6 +18,21 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Install
 Requires Omarchy (Hyprland Lua config + the Omarchy shell), `jq`, and optionally `gum`.
+
+`omarchy plugin add` clones this repo and enables the shell plugin. Omarchy does not run install scripts, so the panel finishes setup the first time it loads:
+
+```sh
+omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
+```
+
+That first load is not just a shell plugin. It writes `omarchy-agents`, the icons, and `~/.config/hypr/agent-switcher.lua`, appends a `require` to `hyprland.lua`, reloads Hyprland, and turns on every agent it detects. Those agents get their direct keybinds. There is no picker on this path, and the shell is not restarted (a clone install does restart it). Run `omarchy-agents setup` afterwards to change the list.
+
+The panel stays loaded, so every later shell start runs `install.sh --from-shell`. That exits immediately when the launcher, registry, config, Hyprland include, and generated rules are already in place and the launcher and registry are not older than the checkout. An icon-only change is copied on the next run that also updates `omarchy-agents` or `registry.conf`.
+
+`omarchy plugin remove` deletes the checkout only. The launcher, icons, `agents.conf`, and Hyprland include stay until you run `uninstall.sh` from `~/.config/omarchy/plugins/io.github.paytonorogers.agent-switcher`. Until then, Super+A can still be bound with the tab strip gone.
+
+To pick and order agents while installing, clone and run the installer instead:
+
 ```sh
 git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
 cd omarchy-agent-switcher
@@ -27,12 +42,14 @@ cd omarchy-agent-switcher
 `install.sh` can be re-run safely. It:
 - copies `omarchy-agents` to `~/.local/bin`
 - copies the registry and icons to `~/.local/share/omarchy-agent-switcher`
-- copies the plugin to `~/.config/omarchy/plugins/io.github.paytonorogers.agent-switcher`
+- copies `manifest.json` and `plugin/Switcher.qml` to `~/.config/omarchy/plugins/io.github.paytonorogers.agent-switcher` (a `plugin add` checkout is already that directory, so this copy is skipped)
 - writes `~/.config/hypr/agent-switcher.lua` (window rules and binds)
 - adds one `require("hypr.agent-switcher")` line to `hyprland.lua` (backed up to `hyprland.lua.bak-agent-switcher`)
 - enables the plugin and restarts the shell
 
-Uninstall: `./uninstall.sh` reverts all of that and keeps your config. `./uninstall.sh --purge` removes the config too.
+Uninstall: `./uninstall.sh` reverts the launcher, icons, Hyprland include, and plugin directory, and keeps your config. `./uninstall.sh --purge` removes the config too. After `omarchy plugin add`, run it from the plugin directory before `omarchy plugin remove`, because remove does not run this script.
+
+`./install.sh` now keeps `Switcher.qml` at `plugin/Switcher.qml`. If you previously installed an older revision and edited the flattened `Switcher.qml` next to the manifest, those edits are not copied; the old file is left in place and no longer loaded.
 
 ## Choosing agents
 `omarchy-agents setup` re-runs detection at any time (`--yes` takes everything it finds). Detection uses
@@ -104,5 +121,8 @@ are restored on close. If you pick keys that already do something else, `omarchy
 
 ## Updating
 ```sh
-cd omarchy-agent-switcher && git pull && ./install.sh   # keeps your agents.conf
+omarchy plugin update io.github.paytonorogers.agent-switcher
 ```
+The next time the shell loads the panel, it copies `omarchy-agents` and `registry.conf` again when the checkout copies are newer, and copies the icons in that same pass. `agents.conf` is left alone.
+
+A git clone still updates with `cd omarchy-agent-switcher && git pull && ./install.sh`.

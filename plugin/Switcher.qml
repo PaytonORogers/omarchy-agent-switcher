@@ -52,6 +52,20 @@ Item {
 
   Process { id: proc }
   Process { id: autohideProc; command: [root.bin, "autohide"] }
+  // `omarchy plugin add` never runs install.sh. This checkout keeps that script
+  // next to the repo root; a copy made by install.sh does not, so the test no-ops.
+  Process { id: finishInstall }
+  function localPath(urlValue) {
+    var s = String(urlValue)
+    if (s.indexOf("file://") === 0) s = s.slice(7)
+    try { s = decodeURIComponent(s) } catch (e) {}
+    return s
+  }
+  Component.onCompleted: {
+    var script = localPath(Qt.resolvedUrl("../install.sh"))
+    finishInstall.command = ["bash", "-c", 'if [ -f "$1" ]; then exec "$1" --from-shell; fi', "agent-switcher", script]
+    finishInstall.running = true
+  }
 
   // Auto-hide: when focus leaves special:agents (link opened a browser, user
   // clicked another app or workspace) the script hides panel + strip together.
