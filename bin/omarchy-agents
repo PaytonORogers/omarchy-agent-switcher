@@ -125,7 +125,6 @@ gen_rules() {
     local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
     [[ -n $sh ]] && echo "o.launch_on_start(\"$(lq "$SELF") direct $sh --start-hidden\")"
     # Panel slides from the strip's edge (Omarchy's default specialWorkspace slidevert comes from the bottom).
-    [[ $(strip_edge) == top ]] && echo "pcall(hl.workspace_rule, { workspace = \"special:$WS\", animation = \"slidevert top\" })  -- strip_edge = top"
     if [[ ${S[override_slide_animation]} == true ]]; then
       ms=$(num "${S[slide_ms]}" 250)
       if awk -v m="$ms" 'BEGIN{exit !(m<=0)}'; then echo "hl.animation({ leaf = \"windowsMove\", enabled = false })  -- slide_ms = 0"
@@ -398,6 +397,17 @@ teleport() { prop "$1" no_anim 1; move "$1" "$2"; prop "$1" no_anim 0; }
 left_of()  { echo $(( DX0 - $1 - 40 )); }   # outside the whole desktop, so neighbouring monitors never show it
 right_of() { echo $(( DX1 + 40 )); }
 park_x() { local c=${classes[$1]}; if (( $1 < $2 )); then left_of "${TW[$c]:-$PW}"; else right_of; fi; }
+anim_edge() { # anim_edge on|off: top strip -> panel drops in from the top and leaves upward; off restores the user's leaves
+  [[ $EDGE == top ]] || return 0
+  if [[ $1 == on ]]; then
+    # Leaves that aren't overridden report empty values: restore them with the nearest overridden parent's.
+    ANIM_SAVE=$(hyprctl animations -j 2>/dev/null | jq -r '(.[0] // []) as $a | ($a | map({key: .name, value: .}) | from_entries) as $m
+      | [ "specialWorkspaceIn", "specialWorkspaceOut" ][] as $n
+      | (first(($n, "specialWorkspace", "workspaces", "global") as $k | $m[$k] | select(. != null and .overridden == true)) // empty) as $v
+      | "hl.animation({ leaf = \"\($n)\", enabled = \($v.enabled), speed = \($v.speed), bezier = \"\($v.bezier)\", style = \"\($v.style)\" })"' 2>/dev/null | tr '\n' ' ')
+    LUA+="pcall(function() hl.animation({ leaf = 'specialWorkspaceIn', enabled = true, speed = 3, bezier = 'easeOutQuint', style = 'slidevert top' }) hl.animation({ leaf = 'specialWorkspaceOut', enabled = true, speed = 3, bezier = 'easeOutQuint', style = 'slidevert bottom' }) end) "
+  elif [[ -n ${ANIM_SAVE:-} ]]; then LUA+="pcall(function() $ANIM_SAVE end) "; fi
+}
 keep_cursor() { [[ -n $CURSOR ]] && q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; return 0; }   # hl.dsp.focus warps the pointer
 resolve_cmd() { # absolute path for the program word only; the rest of the line is kept verbatim
   local pi x idx line=$1; pi=$(program_of "$line") || { echo "$line"; return; }
@@ -474,11 +484,12 @@ usage_json() { # {provider: {p: highest limit fraction 0..1, t: "label pct"}} fr
   (( ${#f[@]} )) || { echo '{}'; return; }
   jq -cs '[ .[] | select(type=="object" and (.id|type)=="string") | . as $r
       | ([.limits[]? | select((.percent|type)=="number" and .percent >= 0)] | max_by(.percent)) as $m
-      | select($m != null) | {key: $r.id, value: {p: ([$m.percent,1]|min), t: "\($m.title // $m.label // "usage") \(($m.percent*100)|round)%"}} ] | from_entries' "${f[@]}" 2>/dev/null || echo '{}'
+      | select($m != null) | {key: $r.id, value: {p: ([$m.percent,1]|min), t: ("\($m.title // $m.label // "usage") \(($m.percent*100)|round)%" + (if (($r.usageStatusText // "") | length) > 0 then " · \($r.usageStatusText) (last known value)" else "" end))}} ] | from_entries' "${f[@]}" 2>/dev/null || echo '{}'
 }
 usage_refresh() { # usage_refresh [--force]: run collectors in the background at most every usage_refresh_min
   [[ ${S[usage_display]} == off ]] && return 0
   local stamp=$STATE/usage.stamp min; min=$(num "${S[usage_refresh_min]}" 10)
+  [[ ${1:-} == --open ]] && { (( ${min%.*} > 2 )) && min=2; shift; }   # opening the panel: refresh if older than 2 minutes
   if [[ ${1:-} != --force && -f $stamp ]] && (( $(date +%s) - $(stat -c %Y "$stamp") < ${min%.*} * 60 )); then return 0; fi
   local r=$DATA/collectors/refresh; [[ -x $r ]] || { log "usage: collectors not installed"; return 0; }
   command -v python3 >/dev/null || return 0
@@ -556,6 +567,7 @@ shortcuts_json() { # every switcher key, generated from the live config
   [[ -n ${S[shortcuts_key]} ]] && l+=("$(pretty "${S[shortcuts_key]}")" "This cheat sheet")
   l+=("Scroll on strip" "Switch agent" "Click tab" "Switch to agent" "Right-click tab" "Restart / Close menu" "Middle-click tab" "Close agent")
   l+=("← → / Tab / 1-9" "Switch (strip focused)" "?" "Shortcuts (strip focused)" "Esc" "Close sheet / menu / panel")
+  [[ ${S[usage_display]} != off ]] && l+=("Usage %" "Refreshes every ${S[usage_refresh_min]} min (and on open); can lag or differ slightly from the provider")
   while IFS=$'	' read -r i r; do [[ -n $i ]] && l+=("$i" "Resize agent: $r (size is remembered)"); done < <(resize_binds)
   l+=("omarchy-agents reset-size" "Forget remembered agent sizes")
   l+=("Files: right-click → Send to agent" "Nautilus (--with-nautilus) / Open With → Send to agent")
@@ -631,7 +643,11 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
 strip_show() { # after the strip maps, give the keyboard back to the agent window explicitly
   local p a; p=$(payload "$1"); a=$(addr_of "$1")
   ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p"
-    is_addr "$a" && hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end)" ) >/dev/null 2>&1 9>&- & }
+    is_addr "$a" || exit 0
+    aw=$(hyprctl -j activewindow 2>/dev/null | jq -r '.workspace.name // "-"' 2>/dev/null)
+    [[ $aw == "special:$WS" || $aw == - || $aw == null ]] || exit 0   # something else took focus (link opened): leave it
+    cp=$(hyprctl cursorpos 2>/dev/null)
+    hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${cp%%,*}, y = ${cp##*, } })) end)" ) >/dev/null 2>&1 9>&- & }
 strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
 starting() { notify-send -a "Agent switcher" -u low -t 2000 "Starting ${names[$1]}…" 2>/dev/null 9>&- & }
 
@@ -641,7 +657,7 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     ensure "$j"; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
   [[ -n $a ]] && { teleport "$a" "$(slot_x "$i")"; dim_on "$a"; }
-  q "hl.dsp.workspace.toggle_special('$WS')"
+  anim_edge on; q "hl.dsp.workspace.toggle_special('$WS')"; anim_edge off
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     teleport "$b" "$(park_x "$j" "$i")"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
   [[ -n $a ]] && { q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
@@ -649,7 +665,7 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   flush
   echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
   (( pending )) && { starting "$i"; await_window "$i"; }
-  usage_refresh
+  usage_refresh --open
   return 0
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
@@ -672,7 +688,8 @@ switch_to() { # visible -> horizontal slide in tab order, one eval
   return 0
 }
 hide_all() {
-  visible && q "hl.dsp.workspace.toggle_special('$WS')"
+  visible && { anim_edge on; q "hl.dsp.workspace.toggle_special('$WS')"; anim_edge off; }
+  keep_cursor   # item 12: focus falls back to the previous window on hide and Hyprland warps the pointer to it
   local j b; for j in "${!names[@]}"; do b=$(addr_of "$j"); [[ -n $b ]] && { prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; }; done   # never leave one invisible
   LUA+="pcall(function() if agent_switcher then agent_switcher.off() end end) "; flush; strip_hide
 }

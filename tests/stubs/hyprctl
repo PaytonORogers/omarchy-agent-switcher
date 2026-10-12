@@ -10,7 +10,7 @@ case ${1:-} in
   binds) cat "$FAKE/binds.json" 2>/dev/null || echo '[]' ;;
   configerrors) echo "" ;;
   version) echo "Hyprland 0.56.2 (fake)" ;;
-  eval|dispatch|reload|animations) printf '%s\t%s\n' "$1" "${*:2}" >> "$FAKE/calls"; [[ $1 == animations ]] && echo '[[]]' || echo ok ;;
+  eval|dispatch|reload|animations) printf '%s\t%s\n' "$1" "${*:2}" >> "$FAKE/calls"; if [[ $1 == animations ]]; then echo '[[{"name":"specialWorkspace","overridden":true,"bezier":"easeOutQuint","enabled":true,"speed":3.00,"style":"slidevert"},{"name":"specialWorkspaceIn","overridden":false,"bezier":"","enabled":true,"speed":0.00,"style":""}]]'; else echo ok; fi ;;
   *) printf 'other\t%s\n' "$*" >> "$FAKE/calls" ;;
 esac
 : "$j"
