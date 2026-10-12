@@ -394,14 +394,22 @@ setup() {
     fi
     (( ${#sel[@]} )) || die "nothing selected"
     ordered=("${sel[@]}")
+    if (( ${#sel[@]} > 1 )); then
+      for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
+      if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)") || return 1
+      else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o || return 1; fi
+      if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
+    fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi
+  local oo=last
   if (( ! yes )); then
     setup_login_gate || return 1
     ordered=(); for f in "${chosen[@]}"; do ordered+=("$(trim "$(cut -d'|' -f2 <<<"$f")")"); done
+    if have_gum; then oo=$(gum choose --header "Super+A opens…" "last" "first" "${ordered[@]}") || return 1
+    else read -r -p "Super+A opens: last used agent, first tab, or an agent name [last]: " oo || return 1; fi
+    oo=$(trim "${oo:-last}"); [[ $oo == *"|"* || $oo == *"="* ]] && oo=last
   fi
-  load_conf
-  local oo=${S[open_on]:-last}
   mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] && cp "$CONF" "$CONF.bak"
   {
     if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' | grep -vE '^[[:space:]]*open_on[[:space:]]*='; else sed '/|/d; /^# Agents (generated/d; /^[[:space:]]*open_on[[:space:]]*=/d' "$DATA/agents.conf.default"; fi

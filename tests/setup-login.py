@@ -141,7 +141,7 @@ class SetupLogin(unittest.TestCase):
     def test_skipping_one_agent_keeps_confirmed_agent(self):
         self.program('agent-b', 'exit 0\n')
         self.registry.write_text('a | A | gui | bin:agent-a | class.a | agent-a |\nb | B | gui | bin:agent-b | class.b | agent-b |\n')
-        code, output = self.run_setup('y\ny\nl\n\ny\ns\n')
+        code, output = self.run_setup('y\ny\n\nl\n\ny\ns\n\n')
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         self.assertNotIn('B ', self.conf.read_text())
