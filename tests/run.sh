@@ -13,6 +13,16 @@ PASS=0; FAILN=0
 ok() { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAILN=$((FAILN+1)); echo "  FAIL $1"; [[ -n ${2:-} ]] && echo "       $2"; }
 check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
+# Strip IPC deliberately runs in the background. Await its observable result
+# rather than assuming it was delivered when the foreground command returned.
+eventually() {
+  local description=$1 assertion=$2 attempt
+  for attempt in {1..40}; do
+    if eval "$assertion"; then ok "$description"; return; fi
+    sleep 0.025
+  done
+  bad "$description" "$assertion"
+}
 
 # Fresh fake world: HOME, config, fake agent binaries, fake hyprland state.
 setup_world() {
@@ -90,7 +100,7 @@ $OA toggle
 check "open toggles special workspace" "evals | grep -q \"toggle_special('agents')\""
 check "open restores cursor" "evals | grep -q 'cursor.move({ x = 100, y = 200 })'"
 check "open: each dispatch pcall-wrapped" "! evals | grep -o 'hl.dispatch' | sed -n 1p | grep -q . || evals | grep -q 'pcall(function() hl.dispatch'"
-check "strip summoned with seq" "grep -q '\"seq\":' $FAKE/shell"
+eventually "strip summoned with seq" "grep -q '\"seq\":' $FAKE/shell"
 monitors 1; : > "$FAKE/calls"
 $OA show B
 # monitor logical width 1920/1.5=1280 -> slot x 243; right park = 1280+40
@@ -439,7 +449,7 @@ clients "class.a:0xa1:-1040" "class.b:0xb1:243" "class.c:0xc1:1320"; sed -i 's/"
 : > "$FAKE/calls"; $OA show A
 check "resized agent re-centred in slot ((1280-1000)/2=140)" "evals | grep -q \"address:0xa1', x = 140\""
 check "resized agent keeps its size (no resize back)" "! evals | grep -q \"address:0xa1', x = 793\""
-check "strip anchors under the active agent's height" "grep summon $FAKE/shell | tail -1 | grep -q '\"top\":553'"
+eventually "strip anchors under the active agent's height" "grep summon $FAKE/shell | tail -1 | grep -q '\"top\":553'"
 $OA reset-size A >/dev/null; check "reset-size forgets it" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
 
 echo "== shortcuts cheat sheet"
