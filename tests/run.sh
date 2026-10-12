@@ -674,6 +674,8 @@ check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.
 
 check "strip configuration regression suite" "python3 \"$ROOT/tests/strip-config.py\""
 
+check "theme roles and usage-fill contrast" "node \"$ROOT/tests/theme-contrast.js\""
+
 check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
 
 echo

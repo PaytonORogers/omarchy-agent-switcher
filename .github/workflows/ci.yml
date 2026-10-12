@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq lua5.4 qt6-declarative-dev-tools
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq nodejs lua5.4 qt6-declarative-dev-tools
       - name: shellcheck
         run: shellcheck -S warning share/configure.sh bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*
       - name: python syntax
