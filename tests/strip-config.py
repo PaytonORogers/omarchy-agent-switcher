@@ -98,6 +98,16 @@ class StripConfig(unittest.TestCase):
         self.assertIn('"picker":true', (self.fake / 'shell').read_text())
         self.assertEqual(self.command('list').stdout.strip(), '')
 
+    def test_empty_strip_can_close_and_refocus_does_not_reopen_picker(self):
+        self.command('disable', 'A', 'B')
+        self.program('omarchy-shell', 'if [ "$1" = agentswitcher ] && [ "$2" = state ]; then echo "open:"; fi\n')
+        (self.fake / 'calls').write_text('')
+        self.command('toggle')
+        self.assertIn('agent_switcher.off()', (self.fake / 'calls').read_text())
+        (self.fake / 'shell').write_text('')
+        self.command('refocus')
+        self.assertEqual((self.fake / 'shell').read_text(), '')
+
     def test_submap_defined_without_overriding_desktop_swap(self):
         self.command('rules')
         rules = self.rules.read_text()

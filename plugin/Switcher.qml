@@ -33,6 +33,7 @@ Item {
   property var actionQueue: []
   property var loginResult: ({state: "checking"})
   property bool loginVisible: false
+  property bool loginCancelled: false
   property string loginAgent: ""
   property string pendingLoginAction: ""
   property string menuFor: ""              // agent whose right-click menu is open
@@ -113,8 +114,8 @@ Item {
   onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
   function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
   function endArrange() { if (!arranging) return; arranging = false; actionQueue = actionQueue.filter(function(a) { return a[0] !== "arrange-keys" }); mutate(["arrange-keys", "off"]) }
-  function dismissControls() { if (loginProc.running && !loginVisible) loginProc.signal(15); controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
-  function close() { if (loginProc.running && !loginVisible) loginProc.signal(15); endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
+  function dismissControls() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
+  function close() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
   function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
   function controls(mode, name) { focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
   function arrange(name) {
@@ -138,13 +139,14 @@ Item {
   function startAction() { if (actionProc.running || !actionQueue.length) return; var a = actionQueue[0]; actionQueue = actionQueue.slice(1); actionProc.command = [bin].concat(a); actionProc.running = true }
   function beginLogin(name, action) {
     if (loginProc.running) return
+    loginCancelled = false
     pendingLoginAction = action || ""
     loginAgent = name; loginResult = {state: "checking", name: name}; controlError = "Checking sign-in…"
     loginProc.command = [Quickshell.env("HOME") + "/.local/share/omarchy-agent-switcher/configure-signin", bin, name]
     loginProc.running = true
   }
   function loginAction(action) {
-    if (action === "cancel") { loginVisible = false; if (loginProc.running) loginProc.signal(15); return }
+    if (action === "cancel") { loginCancelled = true; loginVisible = false; if (loginProc.running) loginProc.signal(15); return }
     if (!loginProc.running) { beginLogin(loginAgent, action); return }
     loginProc.write(action + "\n")
   }
@@ -153,7 +155,7 @@ Item {
     command: [root.bin, "agents", "--json"]
     onExited: { if (root.catalogDirty) { root.catalogDirty = false; Qt.callLater(root.loadCatalog) } }
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: {
-      try { root.catalog = JSON.parse(text); if (!root.active) root.agents = root.catalog.enabled.map(function(n) { return {name:n,state:"stopped"} }); }
+      try { root.catalog = JSON.parse(text); root.hint = root.catalog.settings.show_hint; root.usageDisplay = root.catalog.settings.usage_display; if (!root.active) root.agents = root.catalog.enabled.map(function(n) { return {name:n,state:"stopped"} }); }
       catch (e) { root.controlError = "Cannot read installed agents." }
     } }
   }
@@ -173,6 +175,7 @@ Item {
     stdinEnabled: true
     stdout: SplitParser { onRead: (data) => {
       try {
+        if (root.loginCancelled) return
         var r = JSON.parse(data)
         root.loginResult = r
         if (r.state === "added") { root.loginVisible = false; root.controlError = ""; root.loadCatalog(); root.run(["configure"]); }
