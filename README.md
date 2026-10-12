@@ -51,6 +51,10 @@ It checks dependencies first and swaps files in atomically, so a failed install 
 Uninstall: `./uninstall.sh` reverts all of that and keeps your config. `./uninstall.sh --purge` removes the config too.
 
 ## Choosing agents
+Interactive setup opens sign-in outside the panel before adding selected tabs. Codex and Claude Code use their native login-status commands; other agents require confirmation that they are ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
+
+`setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
+
 `omarchy-agents setup` re-runs detection at any time (`--yes` takes everything it finds). Detection uses
 `share/registry.conf`, one line per known agent:
 

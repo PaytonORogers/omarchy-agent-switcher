@@ -12,6 +12,8 @@ check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 # Fresh fake world: HOME, config, fake agent binaries, fake hyprland state.
 setup_world() {
   T=$(mktemp -d); export HOME=$T/home FAKE=$T/fake XDG_CONFIG_HOME=$T/home/.config XDG_STATE_HOME=$T/home/.local/state XDG_DATA_HOME=$T/home/.local/share
+  export XDG_RUNTIME_DIR=$T/runtime
+  mkdir -p "$XDG_RUNTIME_DIR"
   unset OMARCHY_AGENTS_CONF
   mkdir -p "$HOME/.local/bin" "$FAKE" "$XDG_CONFIG_HOME/omarchy-agent-switcher" "$XDG_CONFIG_HOME/hypr" "$T/agents"
   export PATH="$ROOT/tests/stubs:$T/agents:/usr/bin:/bin"
@@ -586,6 +588,8 @@ check "re-install idempotent (one require line)" "[[ \$(grep -c 'agent-switcher'
 bash "$ROOT/uninstall.sh" >/dev/null 2>&1
 check "uninstall restores hyprland.lua" "[[ \$(cat $XDG_CONFIG_HOME/hypr/hyprland.lua) == '-- user config' ]]"
 check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py && ! -e $XDG_DATA_HOME/applications/omarchy-agents-send.desktop ]]"
+
+check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
 echo
 echo "passed: $PASS  failed: $FAILN"
