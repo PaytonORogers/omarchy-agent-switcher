@@ -289,8 +289,8 @@ setup() {
 runtime_init() {
   exec 9>"$STATE/lock"
   if ! flock -w 3 9; then
-    log "lock timeout for '${cmd:-}' (held by: $(fuser "$STATE/lock" 2>/dev/null | xargs ps -o comm= -p 2>/dev/null | xargs))"
-    case ${cmd:-} in toggle|hide|autohide) force_close ;; esac   # never leave the panel/strip stuck on screen
+    log "lock timeout for '${action:-}' (held by: $(fuser "$STATE/lock" 2>/dev/null | xargs ps -o comm= -p 2>/dev/null | xargs))"
+    case ${action:-} in toggle|hide|autohide) force_close ;; esac   # never leave the panel/strip stuck on screen
     exit 0
   fi
   local tmp=$STATE/snap.$$
@@ -769,13 +769,16 @@ sound_play() { # sound_play <class> <state>: decides and plays (in the backgroun
     f=$DATA/sounds/chime-$st.wav
     if command -v pw-play >/dev/null; then cmd=(pw-play "$f"); elif command -v paplay >/dev/null; then cmd=(paplay "$f"); fi
   else
-    [[ $st == done ]] && id=complete || id=message-new-instant
+    [[ $st == 'done' ]] && id=complete || id=message-new-instant
     f=/usr/share/sounds/freedesktop/stereo/$id.oga
     if command -v pw-play >/dev/null && [[ -f $f ]]; then cmd=(pw-play "$f")   # fastest start
     elif command -v paplay >/dev/null && [[ -f $f ]]; then cmd=(paplay "$f")
     elif command -v canberra-gtk-play >/dev/null; then cmd=(canberra-gtk-play -i "$id" -d omarchy-agent-switcher); fi
   fi
-  [[ -n ${OA_SOUND_PLAYER:-} ]] && cmd=("$OA_SOUND_PLAYER" "${cmd[@]}")   # tests: record instead of play
+  if [[ -n ${OA_SOUND_PLAYER:-} ]]; then
+    (( ${#cmd[@]} )) || cmd=("$f")   # tests still see the intended sound when no real player/file exists
+    cmd=("$OA_SOUND_PLAYER" "${cmd[@]}")
+  fi
   (( ${#cmd[@]} )) || { log "sound: no player for $mode $st"; return 0; }
   log "sound: play $c $st at $(date +%T.%3N): ${cmd[*]}"
   ( timeout 5 "${cmd[@]}" >/dev/null 2>&1 & ) 9>&- 2>/dev/null
@@ -798,7 +801,7 @@ status_of() { # effective state; a "working" with no news for status_stale_min m
   if [[ $st == working ]] && (( $(date +%s) - ${t:-0} > $(num "${S[status_stale_min]}" 10 | cut -d. -f1) * 60 )); then echo idle; return; fi
   case $st in working|approval|error|done) echo "$st" ;; *) echo idle ;; esac
 }
-status_seen() { [[ $(status_of "${classes[$1]}") == done ]] && status_set "${classes[$1]}" idle; return 0; }
+status_seen() { [[ $(status_of "${classes[$1]}") == 'done' ]] && status_set "${classes[$1]}" idle; return 0; }
 status_json() {
   local i out="" st top=idle
   for i in "${!names[@]}"; do st=$(status_of "${classes[$i]}")
@@ -820,9 +823,9 @@ hook_event() { # hook <claude|codex|grok>: called by the agent's hook system wit
     PermissionRequest|permission_request) st=approval ;;
     Notification|notification)
       nt=$(jq -r '[.notification_type, .notificationType, .type, .message] | map(select(. != null)) | join(" ")' <<<"$in" 2>/dev/null); nt=${nt,,}
-      case $nt in *permission*|*approv*|*question*|*elicitation*) st=approval ;; *) st=done ;; esac
-      c=$(class_for "$tag") && [[ $st == done && $(status_of "$c") == approval ]] && return 0 ;;   # an idle ping must not hide an open question
-    Stop|stop|StopCancelled|stop_cancelled) st=done ;;
+      case $nt in *permission*|*approv*|*question*|*elicitation*) st=approval ;; *) st='done' ;; esac
+      c=$(class_for "$tag") && [[ $st == 'done' && $(status_of "$c") == approval ]] && return 0 ;;   # an idle ping must not hide an open question
+    Stop|stop|StopCancelled|stop_cancelled) st='done' ;;
     StopFailure|stop_failure|PostToolUseFailure) st=error ;;
     SessionStart|session_start|SessionEnd|session_end) st=idle ;;
     *) return 0 ;;
@@ -844,7 +847,7 @@ notif_watch() { # Grok Bot has no hooks: a notification from it means a new repl
     if [[ $line == *member=Notify* ]]; then want=1
     elif (( want )) && [[ $line =~ ^[[:space:]]*string\ \"(.*)\"$ ]]; then
       app=${BASH_REMATCH[1]}; want=0
-      [[ $app == "Grok Bot" ]] && status_set "$c" done
+      [[ $app == "Grok Bot" ]] && status_set "$c" 'done'
     fi
   done
 }
@@ -891,8 +894,8 @@ bar_entry() { # add|remove our bar icon in shell.json: center section, directly 
 # Keep the log small.
 [[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
 
-cmd=${1:-toggle}
-case $cmd in
+action=${1:-toggle}
+case $action in
   rules) gen_rules; [[ ${2:-} == --reload ]] && hyprctl reload >/dev/null 2>&1; exit 0 ;;
   setup) shift; setup "$@"; exit ;;
   doctor) doctor; exit ;;
@@ -911,11 +914,11 @@ case $cmd in
   bar-entry) bar_entry "${2:-add}"; exit 0 ;;
 esac
 runtime_init
-case $cmd in
+case $action in
   toggle) if visible; then hide_all; else open_idx "$(open_on_idx)"; fi ;;
   show)   i=$(need_idx "${2:-$last}") || exit 1; if visible; then switch_to "$i"; else open_idx "$i"; fi ;;
   next|prev) visible || { cycle_keys off; strip_hide; wait; exit 0; }   # panel was closed some other way
-          i=$(idx_of "$last"); if [[ $cmd == next ]]; then i=$(( (i+1)%N )); else i=$(( (i-1+N)%N )); fi; switch_to "$i" ;;
+          i=$(idx_of "$last"); if [[ $action == next ]]; then i=$(( (i+1)%N )); else i=$(( (i-1+N)%N )); fi; switch_to "$i" ;;
   direct) if [[ ${3:-} == --start-hidden ]]; then
             for c in ${2//,/ }; do i=$(idx_of "$c"); [[ -n $i ]] && { ensure "$i" || true; }; done; flush
           else
@@ -927,7 +930,7 @@ case $cmd in
   close|restart)
           i=$(need_idx "${2:-}") || exit 1; a=$(addr_of "$i")
           [[ -n $a ]] && { q "hl.dsp.window.close({ window = 'address:$a' })"; flush; }
-          if [[ $cmd == restart ]]; then
+          if [[ $action == restart ]]; then
             for _ in $(seq 30); do sleep 0.2; [[ -z $(client_addr "${classes[$i]}") ]] && break; done
             ADDR[${classes[$i]}]=""; rm -f "$STATE/launch.${classes[$i]}"
             if visible && [[ ${names[$i]} == "$last" ]]; then launch "$i"; starting "$i"; await_window "$i"; else launch "$i"; fi
@@ -946,7 +949,7 @@ case $cmd in
           wc=$(jq -r '.class // "" | ascii_downcase' <<<"$cj"); wi=$(jq -r '.initialClass // "" | ascii_downcase' <<<"$cj")
           for c in "${classes[@]}"; do [[ ${c,,} == "$wc" || ${c,,} == "$wi" ]] && exit 0; done
           tw=$(hyprctl -j monitors 2>/dev/null | jq -r --arg ws "special:$WS" 'first(.[] | select(.specialWorkspace.name == $ws) | .activeWorkspace.id // empty) // empty' 2>/dev/null)
-          [[ $tw =~ ^-?[0-9]+$ ]] || tw=e+0
+          [[ $tw =~ ^-?[0-9]+$ ]] || tw='e+0'
           log "evict $w ($wc) -> workspace $tw"
           hide_all
           hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$tw', follow = false, window = 'address:$w' })) end) pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$w' })) end)" >/dev/null 2>&1 ;;

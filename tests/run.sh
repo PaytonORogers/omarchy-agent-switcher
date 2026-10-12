@@ -259,7 +259,7 @@ check "no status -> idle" "[[ \$(st class.a) == idle && \$($OA status --json | j
 $OA status-set A working; check "status-set by name" "[[ \$(st class.a) == working ]]"
 check "status-set refreshes the strip" "grep -qx 'agentswitcher status' $FAKE/shell"
 ! $OA status-set A bogus 2>/dev/null; check "invalid state rejected" "[[ \$? == 0 && \$(st class.a) == working ]]"
-$OA status-set class.b done; check "top: done beats working" "[[ \$($OA status --json | jq -r .top) == done ]]"
+$OA status-set class.b 'done'; check "top: done beats working" "[[ \$($OA status --json | jq -r .top) == done ]]"
 $OA status-set C error; check "top: error beats done" "[[ \$($OA status --json | jq -r .top) == error ]]"
 $OA status-set A approval; check "top: approval beats error" "[[ \$($OA status --json | jq -r .top) == approval ]]"
 echo "working $(( $(date +%s) - 700 ))" > "$SD/class.a"; check "stale working (>10 min) shows idle" "[[ \$(st class.a) == idle ]]"
@@ -300,7 +300,7 @@ CS=$HOME/.claude/settings.json
 check "claude: our hooks added, theirs kept" "jq -e '.model==\"opus\" and (.hooks.Stop|length)==2 and .hooks.Stop[0].hooks[0].command==\"mine.sh\" and (.hooks.UserPromptSubmit[0].hooks[0].command|test(\"hook claude\$\"))' $CS >/dev/null"
 check "claude: backup made" "ls $HOME/.claude/ | grep -q 'settings.json.bak-agent-switcher-'"
 check "codex + grok files created" "jq -e '.hooks.PermissionRequest[0].hooks[0].command|test(\"hook codex\$\")' $HOME/.codex/hooks.json >/dev/null && jq -e '.hooks.StopFailure[0].hooks[0].command|test(\"hook grok\$\")' $HOME/.grok/hooks/omarchy-agent-switcher.json >/dev/null"
-A1=$(cat $CS $HOME/.codex/hooks.json); nb=$(ls $HOME/.claude | grep -c bak-agent)
+A1=$(cat $CS $HOME/.codex/hooks.json); nb=$(find "$HOME/.claude" -maxdepth 1 -name '*bak-agent*' 2>/dev/null | wc -l)
 $OA hooks install >/dev/null; check "install is idempotent (no dupes, no new backup)" "[[ \$(cat $CS $HOME/.codex/hooks.json) == \"\$A1\" && \$(ls $HOME/.claude | grep -c bak-agent) == $nb ]]"
 $OA hooks uninstall >/dev/null
 check "first backup still holds the original" "[[ \$(jq -cS . \$(ls $HOME/.claude/settings.json.bak-agent-switcher-* | sort | head -1)) == \"\$(jq -cS . $T/orig.json)\" ]]"
@@ -323,7 +323,7 @@ snd() { sleep 0.3; cat "$SL" 2>/dev/null; }; sreset() { : > "$SL"; rm -f "$XDG_S
 sreset; $OA status-set A working; check "working is silent" "[[ -z \$(snd) ]]"
 sreset; $OA status-set A approval; check "approval plays message-new-instant (default)" "snd | grep -q 'message-new-instant'"
 sreset; $OA status-set A approval; check "same state again is silent" "[[ -z \$(snd) ]]"
-sreset; $OA status-set B done; check "done plays complete" "snd | grep -q 'complete'"
+sreset; $OA status-set B 'done'; check "done plays complete" "snd | grep -q 'complete'"
 $OA status-set C error; check "burst within 3s is rate-limited" "[[ \$(snd | wc -l) == 1 ]]"
 sreset; $OA status-set C idle; echo 'sound = chime' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA status-set C error
 check "chime mode plays the bundled error chime" "snd | grep -q 'sounds/chime-error.wav'"
@@ -332,12 +332,12 @@ sreset; $OA status-set C idle; sed -i 's/^sound = chime/sound = off/' "$XDG_CONF
 sed -i '/^sound = /d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 sreset; $OA status-set C idle; mkdir -p "$XDG_STATE_HOME/omarchy"; echo '{"version":3,"dnd":true}' > "$XDG_STATE_HOME/omarchy/notifications.json"
 $OA status-set C error; check "do-not-disturb is respected" "[[ -z \$(snd) ]]"; rm -f "$XDG_STATE_HOME/omarchy/notifications.json"
-sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A done
+sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A 'done'
 check "no sound when that tab is open and focused" "[[ -z \$(snd) ]]"
-sreset; $OA status-set B idle; $OA status-set B done; check "other agent's sound still plays while A is in view" "snd | grep -q complete"
-sreset; $OA status-set A idle; monitors 0; echo '{"class":"Class.A","workspace":{"name":"3"}}' > "$FAKE/activewindow.json"; $OA status-set A done
+sreset; $OA status-set B idle; $OA status-set B 'done'; check "other agent's sound still plays while A is in view" "snd | grep -q complete"
+sreset; $OA status-set A idle; monitors 0; echo '{"class":"Class.A","workspace":{"name":"3"}}' > "$FAKE/activewindow.json"; $OA status-set A 'done'
 check "focused on a normal workspace (class case-insensitive) is silent" "[[ -z \$(snd) ]]"
-sreset; $OA status-set A idle; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A done
+sreset; $OA status-set A idle; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A 'done'
 check "agent focused but panel hidden still plays" "snd | grep -q complete"
 sreset; $OA status-set A idle; monitors 1; printf 'method call time=1 sender=:1.9 -> destination=org.freedesktop.Notifications serial=7 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify\n   string "Grok Bot"\n' > "$T/notif"
 sed -i 's/^A | class.a/A | class.a/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; echo 'GB | grok-bot | agent-a | | | grok-bot' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
