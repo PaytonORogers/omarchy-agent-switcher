@@ -6,7 +6,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Demo
 
-> **Illustrations, not screen recordings.** These are rendered mock-ups of the panel and strip with stand-in agent windows; the real UI may differ slightly.
+> **Real screen recordings** of the panel and strip, captured on Omarchy/Hyprland with demo stand-in agent windows (no real chats shown).
 
 | Open / close (Super+A) | Switch agents |
 |---|---|
@@ -14,7 +14,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 | **Usage meter** (hover a tab for the percent) | **Shortcuts sheet** (Super+/) |
 | ![Hovering a tab shows its usage percent](docs/media/agent-switcher-3-usage-hover.gif) | ![Super+/ opens the shortcuts sheet on the far side of the strip (below a top strip)](docs/media/agent-switcher-4-shortcuts.gif) |
 | **Status dots** on each tab | **Status tooltip** (hover the bar icon) |
-| ![Status dots on tabs for working, question, error, done](docs/media/agent-switcher-5-status-dots.gif) | ![Hovering the bar icon shows a status tooltip](docs/media/agent-switcher-6-status-tooltip.gif) |
+| ![Status dots on tabs for working, question, error, done](docs/media/agent-switcher-5-status-dots.gif) | ![Hovering the bar icon shows a status tooltip](docs/media/agent-switcher-6-tooltip.gif) |
 
 
 ## Features
