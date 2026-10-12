@@ -478,18 +478,19 @@ Item {
     }
 
     // Reserve space without moving the centered tab pill when the actions appear.
-    Item {
-      x: strip.x - 5; y: strip.y - 5
-      width: strip.width + sideControls.width + 16; height: strip.height + 10
-      HoverHandler { id: stripHover; blocking: false }
+    HoverHandler {
+      id: stripHover
+      parent: win.contentItem
+      blocking: false
+      readonly property bool overStrip: hovered && point.position.x >= strip.x - 5 && point.position.x <= strip.x + strip.width + sideControls.width + 11 && point.position.y >= strip.y - 5 && point.position.y <= strip.y + strip.height + 5
     }
     Row {
       id: sideControls
       anchors.left: strip.right; anchors.leftMargin: 6
       anchors.verticalCenter: strip.verticalCenter
       spacing: 6
-      opacity: stripHover.hovered ? 1 : 0
-      enabled: stripHover.hovered
+      opacity: stripHover.overStrip ? 1 : 0
+      enabled: stripHover.overStrip
       Behavior on opacity { NumberAnimation { duration: 100 } }
       HoverAction {
         glyph: "+"; label: "Add agent"
