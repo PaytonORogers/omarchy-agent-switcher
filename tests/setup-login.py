@@ -77,12 +77,24 @@ class SetupLogin(unittest.TestCase):
         self.assertFalse(list(self.state.glob('setup-rules.*')))
 
     def test_confirmation_enables_agent(self):
-        code, output = self.run_setup('y\n\ny\n\n')
+        code, output = self.run_setup('y\nl\n\ny\n\n')
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         calls = (self.fake / 'calls').read_text()
-        self.assertIn("hl.dsp.workspace('2')", calls)
+        self.assertIn("hl.dsp.focus({ workspace = '2' })", calls)
         self.assertFalse((self.state / 'setup-login').exists())
+
+    def test_already_ready_manual_agent_never_opens(self):
+        code, output = self.run_setup('y\ny\n\n')
+        self.assertEqual(code, 0, output)
+        self.assertFalse((self.fake / 'launch').exists())
+        self.assertIn('A ', self.conf.read_text())
+
+    def test_close_option_closes_login_window_before_confirmation(self):
+        (self.fake / 'clients.json').write_text('[{"class":"class.a","address":"0xa1","floating":false,"workspace":{"name":"1"},"size":[800,600],"at":[0,0]}]')
+        code, output = self.run_setup('y\nl\nc\ny\n\n')
+        self.assertEqual(code, 0, output)
+        self.assertIn("window.close({ window = 'address:0xa1' })", (self.fake / 'calls').read_text())
 
     def test_skip_preserves_config_and_rules(self):
         code, output = self.run_setup('y\ns\n')
@@ -107,7 +119,7 @@ class SetupLogin(unittest.TestCase):
     def test_failed_native_check_does_not_enable(self):
         self.registry.write_text('claude | Claude Code | gui | bin:claude | class.claude | claude |\n')
         self.program('claude', 'exit 1\n')
-        code, output = self.run_setup('y\n\ns\n')
+        code, output = self.run_setup('y\n\n\ns\n')
         self.assertNotEqual(code, 0, output)
         self.assertIn('still reports signed out', output)
         self.assertEqual(self.conf.read_text(), self.original)
@@ -116,7 +128,7 @@ class SetupLogin(unittest.TestCase):
     def test_unsupported_native_command_uses_confirmation(self):
         self.registry.write_text('codex | Codex | gui | bin:codex | class.codex | codex |\n')
         self.program('codex', 'exit 2\n')
-        code, output = self.run_setup('y\n\ny\n\n')
+        code, output = self.run_setup('y\nl\n\ny\n\n')
         self.assertEqual(code, 0, output)
         self.assertIn('No reliable login check', output)
 
@@ -129,13 +141,13 @@ class SetupLogin(unittest.TestCase):
     def test_skipping_one_agent_keeps_confirmed_agent(self):
         self.program('agent-b', 'exit 0\n')
         self.registry.write_text('a | A | gui | bin:agent-a | class.a | agent-a |\nb | B | gui | bin:agent-b | class.b | agent-b |\n')
-        code, output = self.run_setup('y\ny\n\n\ny\ns\n\n')
+        code, output = self.run_setup('y\ny\n\nl\n\ny\ns\n\n')
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         self.assertNotIn('B ', self.conf.read_text())
 
     def test_manual_decline_does_not_enable(self):
-        code, output = self.run_setup('y\n\nn\ns\n')
+        code, output = self.run_setup('y\nl\n\nn\ns\n')
         self.assertNotEqual(code, 0, output)
         self.assertEqual(self.conf.read_text(), self.original)
         self.assert_restored()
@@ -143,7 +155,7 @@ class SetupLogin(unittest.TestCase):
     def test_login_becomes_verified_after_window_launch(self):
         self.registry.write_text('codex | Codex | gui | bin:codex | class.codex | codex |\n')
         self.program('codex', 'if [ "$1" = login ]; then test -e "$FAKE/signed-in"; else touch "$FAKE/signed-in"; fi\n')
-        proc, master = self.start('y\n')
+        proc, master = self.start('y\n\n')
         try:
             deadline = time.monotonic() + 10
             while not (self.fake / 'signed-in').exists() and time.monotonic() < deadline:
@@ -161,7 +173,7 @@ class SetupLogin(unittest.TestCase):
 
     def test_existing_agent_excluded_during_login_and_theme_refresh(self):
         self.conf.write_text('A | class.a | agent-a | |\n')
-        proc, master = self.start('y\n')
+        proc, master = self.start('y\nl\n')
         try:
             deadline = time.monotonic() + 10
             while not (self.state / 'setup-login').exists() and time.monotonic() < deadline:
@@ -172,7 +184,10 @@ class SetupLogin(unittest.TestCase):
             self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
             self.assertNotIn('o.window(', self.rules.read_text())
             os.write(master, b'q\n')
-            proc.communicate(timeout=10)
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"termination timeout: parent status={proc.poll()}")
             self.assert_restored()
         finally:
             if proc.poll() is None:
@@ -181,7 +196,7 @@ class SetupLogin(unittest.TestCase):
             os.close(master)
 
     def test_signal_restores_rules(self):
-        proc, master = self.start('y\n')
+        proc, master = self.start('y\nl\n')
         try:
             output = b''
             deadline = time.monotonic() + 15
@@ -190,7 +205,10 @@ class SetupLogin(unittest.TestCase):
                     output += os.read(proc.stdout.fileno(), 4096)
             self.assertIn(b'Enter to check/confirm', output)
             proc.send_signal(signal.SIGTERM)
-            proc.communicate(timeout=10)
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"termination timeout: parent status={proc.poll()}")
             self.assert_restored()
             self.assertEqual(self.conf.read_text(), self.original)
         finally:
