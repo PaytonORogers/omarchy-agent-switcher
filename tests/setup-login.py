@@ -180,6 +180,16 @@ class SetupLogin(unittest.TestCase):
                 proc.wait()
             os.close(master)
 
+    def test_reordered_rows_survive_signin_and_config_save(self):
+        self.registry.write_text('codex | A | gui | bin:codex | class.a | codex |\nclaude | B | gui | bin:claude | class.b | claude |\n')
+        self.program('codex', 'exit 0\n')
+        self.program('claude', 'exit 0\n')
+        code, output = self.run_setup('y\ny\n\x1b[1;3B\n\n')
+        self.assertEqual(code, 0, output)
+        listed = subprocess.run([str(ROOT / 'bin/omarchy-agents'), 'list'], env=self.env,
+                                capture_output=True, text=True, check=True).stdout.splitlines()
+        self.assertEqual(listed, ['B', 'A'])
+
     def test_signal_restores_rules(self):
         proc, master = self.start('y\n')
         try:
