@@ -172,6 +172,11 @@ echo "== keyboard focus stays on the agent"
 setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"
 $OA show A >/dev/null 2>&1; sleep 0.6
 check "focus re-sent to the agent after the strip maps" "evals | tail -1 | grep -q \"focus({ window = 'address:0xa1' })\""
+echo '{"address":"0xb9","workspace":{"name":"3"}}' > "$FAKE/activewindow.json"; monitors 0; : > "$FAKE/calls"
+$OA show A >/dev/null 2>&1; sleep 0.6
+check "no refocus when another window took focus meanwhile (first link click)" "[[ \$(evals | grep -c \"focus({ window = 'address:0xa1' })\") == 1 ]]"
+rm -f "$FAKE/activewindow.json"
+check "post-show refocus puts the pointer back" "grep -q 'cursor.move({ x = \${cp%%,\*}' $ROOT/bin/omarchy-agents"
 check "strip layer never takes keyboard focus" "grep -q 'keyboardFocus: WlrKeyboardFocus.None' $ROOT/plugin/Switcher.qml && ! grep -q OnDemand $ROOT/plugin/Switcher.qml"
 echo "== evict non-agent windows from the agents workspace"
 setup_world
@@ -206,7 +211,11 @@ G=$($OA geometry); check "no shell.json -> bottom edge" "[[ \$G == *edge=bottom*
 mkdir -p "$XDG_CONFIG_HOME/omarchy"; echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"
 G=$($OA geometry); check "bar on top -> strip on top, panel below it" "[[ \$G == *edge=top* && \$G == *strip_top=10* ]] && [[ \$G =~ panel=[0-9]+x[0-9]+\+[0-9]+\+80 ]]"
 $OA rules >/dev/null 2>&1; R=$XDG_CONFIG_HOME/hypr/agent-switcher.lua
-check "top edge: panel slides down from the top" "grep -q 'animation = \"slidevert top\"' $R"
+check "top edge: no workspace rule (it only applies to new workspaces)" "! grep -q 'workspace_rule' $R"
+monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"; $OA show A >/dev/null 2>&1
+check "top edge: open drops in from the top, then restores the leaves" "evals | grep -q \"specialWorkspaceIn', enabled = true, speed = 3, bezier = 'easeOutQuint', style = 'slidevert top'\" && evals | grep -q \"specialWorkspaceOut'.*slidevert bottom\" && evals | grep -q 'leaf = \"specialWorkspaceIn\".*style = \"slidevert\" })'"
+monitors 1; : > "$FAKE/calls"; $OA hide >/dev/null 2>&1
+check "top edge: hide leaves upward and restores the cursor" "evals | grep -q 'slidevert bottom' && evals | grep -q 'cursor.move'"
 : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "payload carries edge top" "grep summon $FAKE/shell | tail -1 | grep -q '\"edge\":\"top\"'"
 echo '{"bar":{"position":"left"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"
@@ -216,6 +225,29 @@ echo "strip_edge = top" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 G=$($OA geometry); check "strip_edge = top overrides the bar" "[[ \$G == *edge=top* ]]"
 echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"; echo "strip_edge = bottom" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 G=$($OA geometry); check "strip_edge = bottom overrides a top bar" "[[ \$G == *edge=bottom* ]]"
+echo "== fake Cursor end to end (registry -> setup -> rules -> window match -> icon)"
+setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+D=$XDG_DATA_HOME/omarchy-agent-switcher; mkdir -p "$D"; cp "$ROOT/share/registry.conf" "$ROOT/share/agents.conf.default" "$D/"
+for b in agent-a agent-b agent-c; do rm -f "$T/agents/$b"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/cursor"; chmod +x "$T/agents/cursor"
+mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/icons/hicolor/48x48/apps"
+printf '[Desktop Entry]\nName=Cursor\nExec=cursor %%F\nIcon=co.anysphere.cursor\nStartupWMClass=Cursor\nType=Application\n' > "$XDG_DATA_HOME/applications/cursor.desktop"
+: > "$XDG_DATA_HOME/icons/hicolor/48x48/apps/co.anysphere.cursor.png"
+CF=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "setup detects the fake cursor binary from the registry" "grep -qE '^Cursor +\| Cursor +\| uwsm-app -- cursor' $CF"
+check "setup writes Cursor's real icon name" "grep -E '^Cursor ' $CF | grep -q 'co.anysphere.cursor'"
+$OA rules >/dev/null 2>&1
+RX=$(grep -o 'o.window("(?i)^([^"]*)\$"' $R | head -1 | sed 's/^o.window("//; s/"$//; s/\\\\\\\\/\\\\/g')
+check "generated window rule is case-insensitive and names Cursor" "[[ \$RX == '(?i)^('*Cursor*')\$' ]]"
+check "rule regex matches Wayland app_id 'cursor' and 'Cursor', not 'cursor-agent'" "python3 -c 'import re,sys; r=re.compile(sys.argv[1]); sys.exit(0 if r.match(\"cursor\") and r.match(\"Cursor\") and not r.match(\"cursor-agent\") else 1)' \"\$RX\""
+monitors 0; clients "cursor:0xc0:243"; : > "$FAKE/calls"; : > "$FAKE/shell"
+$OA show Cursor >/dev/null 2>&1; sleep 0.5
+check "app_id cursor window is the Cursor tab (moved + focused, not relaunched)" "evals | grep -q 'address:0xc0' && ! grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+check "Cursor tab icon resolves to the theme icon" "grep summon $FAKE/shell | tail -1 | grep -q 'image://icon/co.anysphere.cursor'"
+echo '[]' > "$FAKE/clients.json"; : > "$FAKE/calls"; monitors 0
+$OA show Cursor >/dev/null 2>&1; sleep 0.3
+check "no window yet: launches via the registry command" "grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 
 echo "== agent status dots"
 setup_world; monitors 0; clients "class.a:0xa1:243" "class.b:0xb1:243"
@@ -441,6 +473,23 @@ $OA usage --force; sleep 0.5; check "--force refreshes" "[[ \$(wc -l < $FAKE/col
 check "collector output never logged" "! grep -q TOKEN-LEAK $XDG_STATE_HOME/omarchy-agent-switcher/log"
 echo "usage_display = off" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 check "usage_display=off -> no usage" "[[ \$($OA usage --print) == '{}' ]]"
+
+echo "== usage freshness"
+setup_world; monitors 0; clients "class.a:0xa1:243"
+sed -i 's/^A | class.a | agent-a | SUPER + SHIFT + A |$/A | class.a | agent-a | SUPER + SHIFT + A | | grok-bot/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+U=$HOME/.local/state/omarchy/agents/usage; mkdir -p "$U"
+echo '{"id":"grok-bot","usageStatusText":"Sign-in expired","limits":[{"title":"Weekly","percent":0.7655}]}' > "$U/grok-bot.json"
+J=$($OA usage --print 2>/dev/null)
+check "stale record says so (last known value)" "[[ \$J == *'Weekly 77%'*'Sign-in expired (last known value)'* ]]"
+: > "$FAKE/shell"; $OA shortcuts >/dev/null 2>&1; sleep 0.5
+check "cheat sheet has the usage disclaimer" "grep summon $FAKE/shell | tail -1 | grep -q 'can lag or differ slightly'"
+check "README has the usage disclaimer" "grep -q 'can lag or differ slightly' $ROOT/README.md"
+check "hover text has the disclaimer" "grep -q 'can lag or differ slightly from the provider' $ROOT/plugin/Switcher.qml"
+mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher/collectors"; printf '#!/bin/sh\necho ran >> "$FAKE/collect"\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/collectors/refresh"; chmod +x "$XDG_DATA_HOME/omarchy-agent-switcher/collectors/refresh"
+touch -d '-3 minutes' "$XDG_STATE_HOME/omarchy-agent-switcher/usage.stamp"; rm -f "$FAKE/collect"
+monitors 0; $OA show A >/dev/null 2>&1; sleep 1
+check "open refreshes usage older than 2 min (usage_refresh_min 10)" "[[ -s $FAKE/collect ]]"
+check "sheet click-away catcher exists under the strip" "grep -q 'omarchy-agent-switcher-sheet' $ROOT/plugin/Switcher.qml"
 
 echo "== open_on"
 for case in "last:B:0xb1" "first:B:0xa1" "C:A:0xc1" "class.c:A:0xc1" "Nope:B:0xa1"; do

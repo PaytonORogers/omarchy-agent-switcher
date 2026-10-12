@@ -72,3 +72,16 @@ send_shot() {
 
 pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; echo "$k"; }
 ```
+
+## Deferred: richer Grok Bot states (approval, working)
+
+Grok Bot has no hook system. Today its only signal is a desktop notification per reply
+(app "Grok Bot", summary = agent name, body = first line of the reply), which drives the
+green "new reply" dot (validated). Feasibility of approval/working (next sprint):
+- Notification history JSON (~/.local/state/omarchy/notifications/history/*.json) carries
+  app, summary, body, urgency, timestamp. No actions, category or hints that mark an
+  approval card; approval prompts look like ordinary replies ("Post this comment and close PR #1?").
+- Heuristics on body text (question mark, "approve", "OK to") would be unreliable.
+- Feasible routes: (1) ask the Grok Bot app for a notification category/hint or action
+  buttons on approval cards (then map in notif-watch); (2) a local status API/file from the app.
+- Window title is static ("Grok Bot"): not usable.

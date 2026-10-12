@@ -123,6 +123,8 @@ usage_refresh_min = 10      # collectors run on open, at most this often, and on
 ```
 `omarchy-agents usage --force` refreshes now. Collector output is never logged.
 
+Usage numbers refresh periodically (on open if older than 2 minutes, and every `usage_refresh_min` while open), so they can lag or differ slightly from the provider's own number. If a collector can't sign in (e.g. "Sign-in expired"), the tab keeps the last known value and the hover text says so.
+
 ## Sizing
 Sizes are computed from the focused monitor's logical size (scale and rotation applied) minus reserved space such as the top bar.
 **Resize any agent with Omarchy's normal resize keys** while it's showing; the switcher remembers that agent's size per monitor,

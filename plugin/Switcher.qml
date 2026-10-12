@@ -25,6 +25,7 @@ Item {
   property color accent: Color.accent      // overridden by `accent =` in agents.conf
   property string menuFor: ""              // agent whose right-click menu is open
   property var shortcuts: []               // [{ keys, action }] generated from the live config
+  property string hoverInfo: ""             // usage detail for the hovered tab, shown in the hint line
   property bool sheet: false               // cheat-sheet overlay
   property string usageDisplay: "fill"     // fill | percent | off
   property real usageWarn: 0.7
@@ -139,6 +140,21 @@ Item {
     wheelAcc += dy
     if (Math.abs(wheelAcc) < 120 || Date.now() - lastWheel < 150) return
     run([wheelAcc < 0 ? "next" : "prev"]); wheelAcc = 0; lastWheel = Date.now()
+  }
+
+  // Click-away for the cheat sheet: while it's up, a transparent full-screen layer under the
+  // strip catches the next click anywhere else (including on the agent) and closes the sheet.
+  PanelWindow {
+    id: sheetCatcher
+    visible: root.opened && root.sheet
+    screen: root.screenFor(root.monitorName)
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omarchy-agent-switcher-sheet"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: root.hideSheet() }
   }
 
   PanelWindow {
@@ -305,6 +321,8 @@ Item {
               id: ma
               anchors.fill: parent
               hoverEnabled: true
+              onContainsMouseChanged: root.hoverInfo = (containsMouse && tab.hasUsage)
+                ? tab.modelData.name + ": " + (tab.modelData.usageLabel || Math.round(tab.usage * 100) + "%") + "  ·  refreshes periodically; can lag or differ slightly from the provider" : ""
               acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
               onClicked: (m) => {
                 strip.forceActiveFocus()
@@ -321,13 +339,13 @@ Item {
     // Hint line under the tabs (show_hint / omarchy-agents hint on|off); the right-click menu replaces it.
     Text {
       id: hintLine
-      visible: root.hint && root.menuFor === ""
+      visible: (root.hint || root.hoverInfo !== "") && root.menuFor === ""
       anchors.top: strip.bottom
       anchors.topMargin: 4
       anchors.horizontalCenter: strip.horizontalCenter
-      text: (root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+      text: root.hoverInfo !== "" ? root.hoverInfo : (root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
-            + "  ·  " + root.prettyKey(root.toggleKey) + " close"
+            + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
       font.family: Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
