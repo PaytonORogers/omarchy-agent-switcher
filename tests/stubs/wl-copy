@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+t=text; [[ ${1:-} == --type ]] && t=$2
+{ printf 'type=%s\n' "$t"; cat; echo; } > "$FAKE/copied"
+[[ -e /proc/$$/fd/9 ]] && echo held >> "$FAKE/wlcopy-fd9"

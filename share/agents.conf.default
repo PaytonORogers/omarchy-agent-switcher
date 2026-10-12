@@ -1,20 +1,32 @@
 # omarchy-agent-switcher config. Run `omarchy-agents rules` (or `setup`) after editing.
 # ---- settings (all optional) ----
 toggle_key = SUPER + A
+open_on = last              # what the toggle opens: last | first | <agent name or class>
 # accent = #9B7BD4          # strip + border colour; empty = active Omarchy theme accent
 # accent_inactive = #5E4A85 # unfocused border; empty = theme selection colour
-width = 0.62                # panel size/position as fractions of the focused monitor
-height = 0.82
-top = 0.06
-slide_ms = 250              # agent-switch slide duration
+width = auto                # auto | 0.62 | 62% | 1200px (logical px of the focused monitor)
+height = auto               # auto fills below the bar, leaving room for the strip
+top = auto                  # gap above the panel
+max_width = 1600            # clamp; min_width = 640
+slide_ms = 250              # agent-switch slide duration; 0 = off
+override_slide_animation = true  # false = keep your own Hyprland windowsMove animation
 opacity = 0.82 0.75         # active inactive
 rounding = 14
 dim = true                  # dim the desktop behind the active agent
-show_hint = true           # small keyboard hint under the strip (runtime: omarchy-agents hint on/off/toggle)
+show_hint = true           # hint line under the tabs (runtime: omarchy-agents hint on/off/toggle)
+click_through = true       # while open, clicking a window outside the panel focuses it (and closes the panel)
 prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
 next_key = SUPER + ALT + RIGHT
+# send_key = SUPER + CTRL + S    # paste selected text into the agent (default unbound)
+strip_edge = auto            # tab strip edge: auto (follows the Omarchy bar) | top | bottom
+usage_display = fill        # usage meter on tabs: fill | percent | off
+usage_warn = 0.70
+usage_crit = 0.90
+usage_refresh_min = 10
+sound = default             # status sound on approval/error/done: default (theme sound) | chime (bundled) | off
+# shortcuts_key = SUPER + SLASH   # optional global bind for the cheat sheet (default unbound)
 # start_hidden = grok-bot  # comma list of window classes to launch hidden at login
-# ---- agents: name | window class | launch | direct key (optional) | icon (optional) ----
+# ---- agents: name | window class | launch | direct key (optional) | icon (optional) | usage provider (optional) ----
 # Agents whose program isn't installed are skipped automatically.
 Grok Bot   | grok-bot              | uwsm-app -- grok-bot | SUPER + SHIFT + A | grok-bot
 Grok Build | org.omarchy.grokbuild | omarchy-launch-tui --app-id=org.omarchy.grokbuild grok | SUPER + ALT + A | grok

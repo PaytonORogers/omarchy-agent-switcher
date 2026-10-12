@@ -6,9 +6,13 @@
 #   omarchy-agents show <name>       open, or slide to, an agent
 #   omarchy-agents next|prev         cycle agents (tab order)
 #   omarchy-agents direct <class> [--start-hidden]   per-agent shortcut
-#   omarchy-agents hide | autohide | list | rules | setup [--yes] | doctor | hint on|off|toggle
+#   omarchy-agents close|restart <name>              manage an agent window
+#   omarchy-agents reset-size [name|all]             forget sizes saved from resizing
+#   omarchy-agents shortcuts                         show the cheat sheet
+#   omarchy-agents send [--text T] | send-files <agent|-> <path>... | usage [--force]
+#   omarchy-agents hide | autohide | list | rules [--reload] | setup [--yes] | doctor | hint on|off|toggle | version
 set -u
-VERSION=1.0.0
+VERSION=1.2.0
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-agent-switcher
@@ -16,111 +20,206 @@ CONF=${OMARCHY_AGENTS_CONF:-$CFG_HOME/omarchy-agent-switcher/agents.conf}
 REGISTRY=$DATA/registry.conf
 RULES=$CFG_HOME/hypr/agent-switcher.lua
 PLUGIN_ID=io.github.paytonorogers.agent-switcher
-SELF=$(readlink -f "$0")
+# Generated binds always point at the installed copy, even when run from a checkout.
+if [[ -x $HOME/.local/bin/omarchy-agents ]]; then SELF=$HOME/.local/bin/omarchy-agents; else SELF=$(readlink -f "$0"); fi
 WS=agents
-export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
+# Extra places agent CLIs live; only used to *find agent programs*, never ahead of system tools.
+AGENT_PATH="$PATH:$HOME/.local/bin:$HOME/.local/share/mise/shims:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin"
+LAUNCH_TIMEOUT=20
 mkdir -p "$STATE"
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf "%s" "${s%"${s##*[![:space:]]}"}"; }
-d() { hyprctl dispatch "$1" >/dev/null 2>&1; }
-die() { echo "omarchy-agents: $*" >&2; exit 1; }
+die() { echo "omarchy-agents: $*" >&2; log "error: $*"; exit 1; }
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$STATE/log" 2>/dev/null
+  [[ -n ${OMARCHY_AGENTS_DEBUG:-} ]] && printf 'omarchy-agents: %s\n' "$*" >&2; return 0; }
+lq() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; printf '%s' "$s"; }   # Lua string escape
+valid_class() { [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; }
+valid_key() { [[ $1 =~ ^[A-Za-z0-9_+\ ]+$ ]]; }
+is_int() { [[ $1 =~ ^-?[0-9]+$ ]]; }
+is_addr() { [[ $1 =~ ^0x[0-9a-fA-F]+$ ]]; }
+wlc() { wl-copy "$@" 9>&-; }   # wl-copy daemonizes: never let it inherit the lock (fd 9)
+find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 
 # ---------- config ----------------------------------------------------------
-declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=0.62 [height]=0.82
-  [top]=0.06 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" )
-names=(); classes=(); cmds=(); keys=(); icons=(); all_names=()
-# Resolve the program a launch line runs (skipping wrappers/flags) and check it exists.
-available() {
+declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
+  [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto [status_stale_min]=10 [sound]=default )
+names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); conf_warnings=()
+# Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
+program_of() {
   local -a t; read -r -a t <<<"$1"; local x i=0
   while (( i < ${#t[@]} )); do
-    x=${t[$i]}; x=${x/#\~/$HOME}; x=${x//\$HOME/$HOME}
+    x=${t[$i]}
     case $x in uwsm-app|app2unit|setsid|env|--|omarchy-launch-tui|omarchy-launch-or-focus-tui|omarchy-launch-webapp|-*|*=*) i=$((i+1)); continue ;; esac
-    if [[ $x == flatpak ]]; then flatpak info "${t[-1]}" >/dev/null 2>&1; return; fi
-    command -v "$x" >/dev/null 2>&1; return
+    echo "$i $x"; return 0
   done; return 1
+}
+available() {
+  local pi x; pi=$(program_of "$1") || return 1; x=${pi#* }
+  x=${x/#\~/$HOME}; x=${x//\$HOME/$HOME}
+  if [[ $x == flatpak ]]; then # flatpak run [opts] <app-id> ...
+    local -a t; read -r -a t <<<"$1"; local j id=""; for (( j=${pi%% *}+1; j<${#t[@]}; j++ )); do [[ ${t[$j]} == run || ${t[$j]} == -* ]] && continue; id=${t[$j]}; break; done
+    [[ -n $id ]] && flatpak info "$id" >/dev/null 2>&1; return
+  fi
+  [[ $x == */* ]] && { [[ -x $x ]]; return; }
+  find_prog "$x" >/dev/null
 }
 load_conf() {
   [[ -f $CONF ]] || return 0
-  local line n c l k ic
+  local line n c l k ic v key
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ $line == *"|"* ]]; then
-      IFS='|' read -r n c l k ic <<<"$line"
-      n=$(trim "$n"); c=$(trim "$c"); l=$(trim "$l"); [[ -z $n || -z $c || -z $l ]] && continue
+      IFS='|' read -r n c l k ic pv <<<"$line"
+      n=$(trim "$n"); c=$(trim "$c"); l=$(trim "$l"); k=$(trim "${k:-}"); ic=$(trim "${ic:-}"); pv=$(trim "${pv:-}")
+      [[ -n $pv && ! $pv =~ ^[A-Za-z0-9._-]+$ ]] && { conf_warnings+=("invalid provider '$pv' for '$n'"); pv=""; }
+      [[ -z $n || -z $c || -z $l ]] && continue
+      valid_class "$c" || { conf_warnings+=("invalid window class '$c' for '$n' (allowed: letters, digits, . _ -); tab skipped"); continue; }
+      [[ -n $k ]] && ! valid_key "$k" && { conf_warnings+=("invalid key '$k' for '$n'; key ignored"); k=""; }
       all_names+=("$n"); available "$l" || continue
-      names+=("$n"); classes+=("$c"); cmds+=("$l"); keys+=("$(trim "${k:-}")"); icons+=("$(trim "${ic:-}")")
+      names+=("$n"); classes+=("$c"); cmds+=("$l"); keys+=("$k"); icons+=("$ic"); providers+=("$pv")
     elif [[ $line == *=* ]]; then
-      local v; v=$(trim "${line#*=}"); v=$(trim "${v%%[[:space:]]#*}"); S[$(trim "${line%%=*}")]=$v
+      key=$(trim "${line%%=*}"); v=$(trim "${line#*=}"); v=$(trim "${v%%[[:space:]]#*}")
+      [[ -v S[$key] ]] || conf_warnings+=("unknown setting '$key'")
+      [[ $v == *=* ]] && conf_warnings+=("setting '$key' looks like several settings on one line; use one per line")
+      S[$key]=$v
     fi
   done < "$CONF"
+  case ${S[sound]} in default|chime|off) ;; *) conf_warnings+=("invalid sound '${S[sound]}' (default | chime | off)"); S[sound]=default ;; esac
+  case ${S[strip_edge]} in auto|top|bottom) ;; *) conf_warnings+=("invalid strip_edge '${S[strip_edge]}' (auto | top | bottom)"); S[strip_edge]=auto ;; esac
+  local kk; for kk in toggle_key prev_key next_key shortcuts_key send_key; do [[ -z ${S[$kk]} ]] || valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
+  [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
+  return 0
 }
 theme_color() { # theme_color <key> -> #RRGGBB from the active Omarchy theme
   local f=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/theme/colors.toml
   [[ -f $f ]] && sed -n "s/^$1[[:space:]]*=[[:space:]]*\"\(#[0-9A-Fa-f]\{6\}\)\".*/\1/p" "$f" | head -1
 }
-accent() { local a=${S[accent]}; [[ -z $a ]] && a=$(theme_color accent); echo "${a:-#89B4FA}"; }
-accent2() { local a=${S[accent_inactive]}; [[ -z $a ]] && a=$(theme_color selection); echo "${a:-#45475A}"; }
+hexcol() { [[ $1 =~ ^#[0-9A-Fa-f]{6}$ ]] && echo "$1" || echo "$2"; }
+accent() { local a=${S[accent]}; [[ -z $a ]] && a=$(theme_color accent); hexcol "${a:-}" "#89B4FA"; }
+accent2() { local a=${S[accent_inactive]}; [[ -z $a ]] && a=$(theme_color selection); hexcol "${a:-}" "#45475A"; }
+num() { [[ $1 =~ ^[0-9]*\.?[0-9]+$ ]] && echo "$1" || echo "$2"; }
 
 # ---------- rules (generated hypr include) ----------------------------------
+declare -A OMARCHY_DEFAULT_DESC=( ["SUPER + ALT + LEFT"]="Move window to group on left" ["SUPER + ALT + RIGHT"]="Move window to group on right" )
+declare -A OMARCHY_DEFAULT_DSP=( ["SUPER + ALT + LEFT"]='hl.dsp.window.move({ into_group = "l" })' ["SUPER + ALT + RIGHT"]='hl.dsp.window.move({ into_group = "r" })' )
 gen_rules() {
   load_conf
-  local re="" c i a=$(accent) b=$(accent2) w=${S[width]} h=${S[height]} t=${S[top]} x
+  local re="" c i a b w h t x sm ms
+  a=$(accent); b=$(accent2); w=$(num "${S[width]}" 0.62); h=$(num "${S[height]}" 0.82); t=$(num "${S[top]}" 0.06)
   x=$(awk -v w="$w" 'BEGIN{printf "%.4f",(1-w)/2}')
-  for c in "${classes[@]}"; do re+="${re:+|}$(sed 's/[.[\()*+?^$]/\\\\&/g' <<<"$c")"; done
+  for c in "${classes[@]}"; do re+="${re:+|}${c//./\\\\.}"; done
   mkdir -p "$(dirname "$RULES")"
+  local op; op=$(lq "${S[opacity]}"); [[ ${S[opacity]} =~ ^[0-9.]+( [0-9.]+)?$ ]] || op="0.82 0.75"
   {
-    echo "-- Generated by omarchy-agents $VERSION from $CONF. Do not edit: run \`omarchy-agents rules\`."
+    echo "-- Generated by omarchy-agents $VERSION. Do not edit: change agents.conf and run \`omarchy-agents rules\`."
     if [[ -n $re ]]; then
-      echo "o.window(\"^($re)\$\", { workspace = \"special:$WS silent\", float = true, size = { \"(monitor_w*$w)\", \"(monitor_h*$h)\" }, move = { \"(monitor_w*$x)\", \"(monitor_h*$t)\" }, tag = \"-default-opacity\", opacity = \"${S[opacity]}\", rounding = ${S[rounding]}, border_size = ${S[border]}, border_color = \"rgb(${a#\#}) rgb(${b#\#})\" })"
+      # (?i): Wayland app_id is often the lowercase applicationName (Cursor -> cursor)
+      # while the desktop file's StartupWMClass keeps the capital spelling.
+      echo "o.window(\"(?i)^($re)\$\", { workspace = \"special:$WS silent\", float = true, size = { \"(monitor_w*$w)\", \"(monitor_h*$h)\" }, move = { \"(monitor_w*$x)\", \"(monitor_h*$t)\" }, tag = \"-default-opacity\", opacity = \"$op\", rounding = $(num "${S[rounding]}" 14), border_size = $(num "${S[border]}" 2), border_color = \"rgb(${a#\#}) rgb(${b#\#})\" })"
     fi
     echo "local function ab(key, desc, cmd) pcall(hl.unbind, key); o.bind(key, desc, cmd) end"
-    echo "ab(\"${S[toggle_key]}\", \"Agent switcher\", \"$SELF toggle\")"
-    for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"${keys[$i]}\", \"${names[$i]} (agent switcher)\", \"$SELF direct ${classes[$i]}\")"; done
-    [[ -n ${S[start_hidden]} ]] && echo "o.launch_on_start(\"$SELF direct ${S[start_hidden]// /} --start-hidden\")"
-    echo "hl.animation({ leaf = \"windowsMove\", enabled = true, speed = $(awk -v m="${S[slide_ms]}" 'BEGIN{printf "%.2f", m/100}'), bezier = \"easeOutQuint\" })  -- agent switch slide (slide_ms)"
-    # Cycle keys exist only while the panel is open (omarchy-agents calls on()/off()).
-    # Omarchy's own binds on these keys are put back on close.
-    cat <<LUA
-agent_switcher = agent_switcher or {}
-local cycle = { { key = "${S[prev_key]}", cmd = "$SELF prev", desc = "Previous agent" }, { key = "${S[next_key]}", cmd = "$SELF next", desc = "Next agent" } }
-local omarchy_default = {
-  ["SUPER + ALT + LEFT"]  = { "Move window to group on left",  function() return hl.dsp.window.move({ into_group = "l" }) end },
-  ["SUPER + ALT + RIGHT"] = { "Move window to group on right", function() return hl.dsp.window.move({ into_group = "r" }) end },
-}
+    [[ -n ${S[toggle_key]} ]] && echo "ab(\"$(lq "${S[toggle_key]}")\", \"Agent switcher\", \"$(lq "$SELF") toggle\")"
+    [[ -n ${S[send_key]} ]] && echo "ab(\"$(lq "${S[send_key]}")\", \"Send selection to agent\", \"$(lq "$SELF") send\")"
+    [[ -n ${S[shortcuts_key]} ]] && echo "ab(\"$(lq "${S[shortcuts_key]}")\", \"Agent switcher shortcuts\", \"$(lq "$SELF") shortcuts\")"
+    for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"$(lq "${keys[$i]}")\", \"$(lq "${names[$i]}") (agent switcher)\", \"$(lq "$SELF") direct ${classes[$i]}\")"; done
+    local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
+    [[ -n $sh ]] && echo "o.launch_on_start(\"$(lq "$SELF") direct $sh --start-hidden\")"
+    # Panel slides from the strip's edge (Omarchy's default specialWorkspace slidevert comes from the bottom).
+    if [[ ${S[override_slide_animation]} == true ]]; then
+      ms=$(num "${S[slide_ms]}" 250)
+      if awk -v m="$ms" 'BEGIN{exit !(m<=0)}'; then echo "hl.animation({ leaf = \"windowsMove\", enabled = false })  -- slide_ms = 0"
+      else sm=$(awk -v m="$ms" 'BEGIN{s=m/100; if (s<0.1) s=0.1; printf "%.2f", s}')
+        echo "hl.animation({ leaf = \"windowsMove\", enabled = true, speed = $sm, bezier = \"easeOutQuint\" })  -- agent switch slide (slide_ms)"; fi
+    fi
+    # Cycle keys exist only while the panel is open. Only an Omarchy default bind
+    # that was really there when rules were generated is put back on close.
+    echo "agent_switcher = agent_switcher or {}"
+    echo "agent_switcher.click_through = $([[ ${S[click_through]} == false ]] && echo false || echo true)"
+    echo "agent_switcher.dim = $([[ ${S[dim]} == true ]] && echo true || echo false)"
+    echo "local cycle = {"
+    local k desc dir restore
+    for dir in prev next; do
+      k=${S[${dir}_key]}; [[ -n $k ]] || continue
+      desc=$(bind_desc "$k"); restore="nil"
+      if [[ -n ${OMARCHY_DEFAULT_DESC[$k]:-} ]] && [[ -z $desc || $desc == "${OMARCHY_DEFAULT_DESC[$k]}" || $desc == "Previous agent" || $desc == "Next agent" ]]; then
+        restore="{ \"${OMARCHY_DEFAULT_DESC[$k]}\", function() return ${OMARCHY_DEFAULT_DSP[$k]} end }"
+      fi
+      echo "  { key = \"$(lq "$k")\", cmd = \"$(lq "$SELF") $dir\", desc = \"$([[ $dir == prev ]] && echo Previous || echo Next) agent\", restore = $restore },"
+    done
+    echo "}"
+    # Esc closes the cheat sheet. The strip never takes the keyboard, so this is a global
+    # bind that exists only while the sheet is up (skipped if Escape is already bound).
+    if [[ -z $(bind_desc "Escape") || $(bind_desc "Escape") == "Close agent switcher shortcuts" ]]; then
+      echo "agent_switcher.sheet_esc = \"$(lq "$SELF") sheet-close\""
+    else echo "agent_switcher.sheet_esc = nil  -- Escape is already bound"; fi
+    cat <<'LUA'
+function agent_switcher.sheet_keys(on)
+  if not agent_switcher.sheet_esc then return end
+  pcall(hl.unbind, "Escape")
+  if on then hl.bind("Escape", hl.dsp.exec_cmd(agent_switcher.sheet_esc), { description = "Close agent switcher shortcuts" }) end
+end
+-- While open: clicks outside the floating agent reach the windows under it
+-- (special_fallthrough). Focus changes only on click. follow_mouse 2 is not enough:
+-- with float_switch_override_focus left at its default, Hyprland still keyboard-focuses
+-- when the pointer crosses from a floating window onto a tiled one, and autohide then
+-- closes the panel. The user's values are restored on close.
 function agent_switcher.on()
   for _, c in ipairs(cycle) do pcall(hl.unbind, c.key); hl.bind(c.key, hl.dsp.exec_cmd(c.cmd), { description = c.desc }) end
+  if agent_switcher.click_through and not agent_switcher.saved then
+    pcall(function()
+      local fm = hl.get_config("input.follow_mouse")
+      local sf = hl.get_config("input.special_fallthrough")
+      local fs = hl.get_config("input.float_switch_override_focus")
+      agent_switcher.saved = { fm = fm, sf = sf, fs = fs }
+      hl.config({ input = { special_fallthrough = true, follow_mouse = 0, float_switch_override_focus = 0 } })
+      if agent_switcher.dim then  -- dim the rest of the screen without dim_around's input grab
+        local ds = hl.get_config("decoration.dim_special")
+        agent_switcher.saved.ds = ds
+        hl.config({ decoration = { dim_special = math.max(ds or 0, 0.4) } })
+      end
+    end)
+  end
 end
 function agent_switcher.off()
+  pcall(agent_switcher.sheet_keys, false)
   for _, c in ipairs(cycle) do
     pcall(hl.unbind, c.key)
-    local d = omarchy_default[c.key]
-    if d then hl.bind(c.key, d[2](), { description = d[1] }) end
+    if c.restore then hl.bind(c.key, c.restore[2](), { description = c.restore[1] }) end
   end
+  local s = agent_switcher.saved
+  if s then agent_switcher.saved = nil
+    pcall(function() hl.config({ input = { special_fallthrough = s.sf, follow_mouse = s.fm, float_switch_override_focus = s.fs } }) end)
+    if s.ds ~= nil then pcall(function() hl.config({ decoration = { dim_special = s.ds } }) end) end end
 end
 LUA
   } > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
   echo "wrote $RULES"
-  local k desc; for k in "${S[prev_key]}" "${S[next_key]}"; do
-    desc=$(bind_desc "$k"); [[ -n $desc && $desc != "Move window to group on"* && $desc != *"agent"* ]] && \
+  for k in "${S[prev_key]}" "${S[next_key]}"; do
+    [[ -n $k ]] || continue; desc=$(bind_desc "$k")
+    [[ -n $desc && $desc != "${OMARCHY_DEFAULT_DESC[$k]:-@}" && $desc != *" agent" ]] && \
       echo "warning: $k is bound to \"$desc\"; it is shadowed while the panel is open and NOT restored on close. Pick another prev_key/next_key." >&2
-  done; return 0
+  done
+  for w in "${conf_warnings[@]}"; do echo "warning: $w" >&2; done
+  return 0
 }
 bind_desc() { # description of an existing bind for "MODS + KEY"
   local mods=0 m key=${1##*+}; key=$(trim "$key")
   for m in $(tr '+' ' ' <<<"${1%+*}"); do case ${m^^} in SHIFT) mods=$((mods|1));; CTRL|CONTROL) mods=$((mods|4));; ALT) mods=$((mods|8));; SUPER|WIN|MOD4) mods=$((mods|64));; esac; done
-  hyprctl binds -j 2>/dev/null | jq -r --argjson m $mods --arg k "${key^^}" 'first(.[]|select(.modmask==$m and (.key|ascii_upcase)==$k and .submap==""))|.description // empty'
+  hyprctl binds -j 2>/dev/null | jq -r --argjson m "$mods" --arg k "${key^^}" 'first(.[]|select(.modmask==$m and (.key|ascii_upcase)==$k and .submap==""))|.description // empty' 2>/dev/null
 }
 
 # ---------- setup (agent detection) -----------------------------------------
-detect() { # prints registry lines whose detection matches
-  local line id n kind det c l ic
+detect() { # prints registry lines whose detection matches (and whose fields are valid)
+  local line id n kind det c l ic dd e
   while IFS= read -r line; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
-    IFS='|' read -r id n kind det c l ic <<<"$line"; det=$(trim "$det")
+    IFS='|' read -r id n kind det c l ic <<<"$line"; det=$(trim "$det"); c=$(trim "$c")
+    valid_class "$c" || continue
     local how=${det%%:*} what=${det#*:} ok=1
+    [[ $what =~ ^[A-Za-z0-9._+-]+$ ]] || continue
     case $how in
-      bin) command -v "$what" >/dev/null 2>&1 && ok=0 ;;
+      bin) find_prog "$what" >/dev/null && ok=0 ;;
       desktop) for dd in ${XDG_DATA_HOME:-$HOME/.local/share} ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do for e in ${dd//:/ }; do [[ -f $e/applications/$what ]] && ok=0; done; done ;;
       flatpak) flatpak info "$what" >/dev/null 2>&1 && ok=0 ;;
     esac
@@ -128,221 +227,754 @@ detect() { # prints registry lines whose detection matches
   done < "$REGISTRY"
 }
 agent_line() { # registry line -> agents.conf line
-  local id n kind det c l ic p; IFS='|' read -r id n kind det c l ic <<<"$1"
+  local id n kind det c l ic p k=""; IFS='|' read -r id n kind det c l ic <<<"$1"
   id=$(trim "$id"); n=$(trim "$n"); kind=$(trim "$kind"); det=$(trim "$det"); c=$(trim "$c"); l=$(trim "$l"); ic=$(trim "$ic")
-  if [[ -z $l && $kind == tui ]]; then p=$(command -v "${det#*:}"); l="omarchy-launch-tui --app-id=$c ${p/#$HOME/\$HOME}"; fi
-  local k=""; [[ -f $CONF ]] && k=$(awk -F'|' -v c="$c" '$2 ~ "^[ \t]*"c"[ \t]*$" {gsub(/^[ \t]+|[ \t]+$/,"",$4); print $4; exit}' "$CONF")
+  n=${n//|/}; ic=${ic//|/}
+  if [[ -z $l && $kind == tui ]]; then p=$(find_prog "${det#*:}"); l="omarchy-launch-tui --app-id=$c ${p/#$HOME/\$HOME}"; fi
+  [[ -f $CONF ]] && k=$(awk -F'|' -v c="$c" '{x=$2; gsub(/^[ \t]+|[ \t]+$/,"",x)} x==c {gsub(/^[ \t]+|[ \t]+$/,"",$4); print $4; exit}' "$CONF")
   printf '%-14s | %-26s | %s | %s | %s\n' "$n" "$c" "$l" "$k" "$ic"
 }
 have_gum() { [[ -z ${OMARCHY_AGENTS_NO_GUM:-} ]] && command -v gum >/dev/null; }   # OMARCHY_AGENTS_NO_GUM=1 forces plain prompts
 setup() {
   [[ -f $REGISTRY ]] || die "registry not found ($REGISTRY); run install.sh"
-  local yes=0; [[ ${1:-} == --yes || ${1:-} == --detect || ! -t 0 ]] && yes=1
-  mapfile -t found < <(detect)
+  local yes=0 dflt=0; [[ ${1:-} == --yes || ${1:-} == --detect || ${1:-} == --default || ! -t 0 ]] && yes=1
+  [[ ${1:-} == --default ]] && dflt=1   # first-load install: one agent (Grok Bot, else the first detected); the rest commented out
+  local -a found=(); mapfile -t found < <(detect)
   (( ${#found[@]} )) || die "no known agents detected. Add one by hand to $CONF"
-  local -a labels=() chosen=(); local f
+  local -a labels=() chosen=() sel=() ordered=(); local f i a o
   for f in "${found[@]}"; do labels+=("$(trim "$(cut -d'|' -f2 <<<"$f")")"); done
-  if (( yes )); then chosen=("${found[@]}")
+  local -a extra=()
+  if (( dflt )); then
+    local pick=0; for i in "${!found[@]}"; do [[ $(trim "$(cut -d'|' -f5 <<<"${found[$i]}")") == grok-bot ]] && { pick=$i; break; }; done
+    chosen=("${found[$pick]}"); for i in "${!found[@]}"; do (( i == pick )) || extra+=("${found[$i]}"); done
+  elif (( yes )); then chosen=("${found[@]}")
   else
-    echo "Detected agents:"; local sel
+    echo "Detected agents:"
     if have_gum; then
       mapfile -t sel < <(gum choose --no-limit --header "Agents for the Super+A switcher (space toggles)" --selected="$(IFS=,; echo "${labels[*]}")" "${labels[@]}")
     else
-      local i a; for i in "${!labels[@]}"; do read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}"); done
+      for i in "${!labels[@]}"; do read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}"); done
     fi
     (( ${#sel[@]} )) || die "nothing selected"
-    local -a ordered=("${sel[@]}") ord
+    ordered=("${sel[@]}")
     if (( ${#sel[@]} > 1 )); then
-      local i; for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
-      local o; if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o; fi
+      for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
+      if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o; fi
       if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
     fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi
+  local oo=last
+  if (( ! yes )); then
+    if have_gum; then oo=$(gum choose --header "Super+A opens…" "last" "first" "${ordered[@]}") || oo=last
+    else read -r -p "Super+A opens: last used agent, first tab, or an agent name [last]: " oo; fi
+    oo=$(trim "${oo:-last}"); [[ $oo == *"|"* || $oo == *"="* ]] && oo=last
+  fi
   mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] && cp "$CONF" "$CONF.bak"
   {
-    if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' ; else sed '/|/d; /^# Agents (generated/d' "$DATA/agents.conf.default"; fi
+    if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' | grep -vE '^[[:space:]]*open_on[[:space:]]*='; else sed '/|/d; /^# Agents (generated/d; /^[[:space:]]*open_on[[:space:]]*=/d' "$DATA/agents.conf.default"; fi
+    echo "open_on = $oo                # what the toggle opens: last | first | <agent name or class>"
     echo "# Agents (generated by \`omarchy-agents setup\`): name | window class | launch | direct key | icon"
     for f in "${chosen[@]}"; do agent_line "$f"; done
+    if (( ${#extra[@]} )); then echo "# Also detected (remove the # to add a tab, or run: omarchy-agents setup):"; for f in "${extra[@]}"; do echo "# $(agent_line "$f")"; done; fi
   } > "$CONF.new" && mv "$CONF.new" "$CONF"
   echo "wrote $CONF (${#chosen[@]} agents)"; gen_rules; hyprctl reload >/dev/null 2>&1 || true
 }
 
 # ---------- runtime ---------------------------------------------------------
-# Speed matters here: every hyprctl/jq spawn is ~10-30 ms on a laptop, so state
-# is read once (monitors + clients + cursor, in parallel) and all window changes
-# for one action go to Hyprland as a single Lua chunk via `hyprctl eval`.
+# Every hyprctl/jq spawn costs ~10-30 ms, so state is read once (monitors +
+# clients + cursor, in parallel) and all window changes for one action go to
+# Hyprland as a single Lua chunk via `hyprctl eval`; each dispatch is pcall'd so
+# one failure can't strand windows half-way (e.g. invisible).
 runtime_init() {
-  exec 9>"$STATE/lock"; flock -w 3 9 || exit 0
+  exec 9>"$STATE/lock"
+  if ! flock -w 3 9; then
+    log "lock timeout for '${action:-}' (held by: $(fuser "$STATE/lock" 2>/dev/null | xargs ps -o comm= -p 2>/dev/null | xargs))"
+    case ${action:-} in toggle|hide|autohide) force_close ;; esac   # never leave the panel/strip stuck on screen
+    exit 0
+  fi
   local tmp=$STATE/snap.$$
   hyprctl -j monitors > "$tmp.m" & hyprctl -j clients > "$tmp.c" & hyprctl cursorpos > "$tmp.p" & wait
-  load_conf; N=${#names[@]}; (( N )) || { rm -f "$tmp".*; notify-send "Agent switcher" "No agents available — run omarchy-agents setup" 2>/dev/null; exit 1; }
-  last=$(cat "$STATE/last" 2>/dev/null || echo "${names[0]}")
-  CURSOR=$(<"$tmp.p")
-  # One jq pass: focused monitor geometry, visibility, and "class addr ws w h x" per agent window.
+  load_conf; N=${#names[@]}
+  (( N )) || { rm -f "$tmp".*; notify-send "Agent switcher" "No agents available — run omarchy-agents setup" 2>/dev/null; log "no agents available"; exit 1; }
+  last=$(cat "$STATE/last" 2>/dev/null || true); [[ -n $(idx_of "$last") ]] || last=${names[0]}
+  CURSOR=$(<"$tmp.p"); [[ $CURSOR =~ ^-?[0-9]+,\ -?[0-9]+$ ]] || CURSOR=""
   local cls; cls=$(printf '%s\n' "${classes[@]}" | jq -R . | jq -sc .)
   local out; out=$(jq -r -n --slurpfile m "$tmp.m" --slurpfile c "$tmp.c" --argjson cls "$cls" --arg ws "special:$WS" '
+    def lw: if (.transform % 2)==1 then [.height,.width] else [.width,.height] end | map(. / 1);
     ($m[0] | first(.[]|select(.focused))) as $f
-    | (if ($f.transform % 2)==1 then [$f.height,$f.width] else [$f.width,$f.height] end) as $wh
-    | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end)",
-      ($cls[] as $k | first($c[0][] | select(.class==$k)) // null | if . then "\(.class) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
+    | ($f | lw) as $wh
+    | ([$m[0][] | . as $x | ($x|lw) as $w2 | [$x.x, $x.x + ($w2[0]/$x.scale|floor)]]) as $b
+    | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end) \([$b[][0]]|min) \([$b[][1]]|max) \(($f.reserved // [0,0,0,0]) | map(floor) | join(" "))",
+      ($cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase)))) // null | if . then "\($k) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
   rm -f "$tmp".*
-  read -r MON MX MY MW MH VIS <<<"$(head -1 <<<"$out")"
-  declare -gA ADDR=() WSN=() WW=() WH=() WX=()
-  local c a w x y z; while read -r c a w x y z; do [[ -n $c ]] || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z; done <<<"$(tail -n +2 <<<"$out")"
-  local fw ft fh; read -r fw ft fh < <(awk -v a="${S[width]}" -v b="${S[top]}" -v c="${S[height]}" 'BEGIN{printf "%d %d %d", a*100+.5, b*100+.5, c*100+.5}')
-  SX=$(( MX + MW * (100 - fw) / 200 )); SY=$(( MY + MH * ft / 100 ))
-  PW=$(( MW * fw / 100 )); PH=$(( MH * fh / 100 ))
-  read -r OA OI <<<"${S[opacity]}"; OI=${OI:-$OA}
+  read -r MON MX MY MW MH VIS DX0 DX1 RL RT RR RB <<<"$(head -1 <<<"$out")"
+  is_int "${MW:-x}" && is_int "${MH:-x}" && is_int "${MX:-x}" && is_int "${MY:-x}" || die "could not read monitor geometry from hyprctl"
+  is_int "${DX0:-x}" || DX0=$MX; is_int "${DX1:-x}" || DX1=$((MX+MW))
+  declare -gA ADDR=() WSN=() WW=() WH=() WX=() TW=() TH=()
+  local c a w x y z; while read -r c a w x y z; do
+    [[ -n $c ]] && is_addr "$a" || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z
+  done <<<"$(tail -n +2 <<<"$out")"
+  for v in RL RT RR RB; do is_int "${!v:-x}" || printf -v "$v" 0; done
+  geometry
+  local i; for i in "${!names[@]}"; do size_for "$i"; done
+  capture_user_size
+  read -r OA OI <<<"${S[opacity]}"; [[ $OA =~ ^[0-9.]+$ ]] || OA=0.82; [[ ${OI:-} =~ ^[0-9.]+$ ]] || OI=$OA
   LUA=""
 }
-q() { LUA+="hl.dispatch($1) "; }                      # queue a dispatcher
-flush() { [[ -n $LUA ]] && hyprctl eval "$LUA" >/dev/null 2>&1; LUA=""; }
-idx_of() { local i; for i in "${!names[@]}"; do [[ ${names[$i]} == "$1" || ${classes[$i]} == "$1" ]] && { echo $i; return; }; done; [[ $1 =~ ^[0-9]+$ ]] && (( $1 < N )) && { echo $1; return; }; echo 0; }
+force_close() { # lock-free recovery: hide special:agents + strip, restore keys/input settings
+  local v; v=$(hyprctl -j monitors 2>/dev/null | jq -r --arg ws "special:$WS" 'any(.[]; .specialWorkspace.name==$ws)' 2>/dev/null)
+  local l="pcall(function() if agent_switcher then agent_switcher.off() end end) "
+  [[ $v == true ]] && l="pcall(function() hl.dispatch(hl.dsp.workspace.toggle_special('$WS')) end) $l"
+  hyprctl eval "$l" >/dev/null 2>&1; timeout 2 omarchy-shell -q agentswitcher hide >/dev/null 2>&1
+  log "force-closed (lock busy)"
+}
+# Strip edge: auto follows the Omarchy bar (shell.json bar.position); left/right/missing -> bottom.
+strip_edge() {
+  local e=${S[strip_edge]:-auto}
+  if [[ $e == auto ]]; then
+    e=$(jq -r '.bar.position // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null)
+    [[ $e == top ]] || e=bottom
+  fi
+  echo "$e"
+}
+strip_top() { # strip y relative to the monitor: above the panel (top edge) or under it (bottom)
+  if [[ $EDGE == top ]]; then echo $(( OY - MY + 10 )); else echo $(( SY - MY + TH[${classes[$1]}] + 10 )); fi; }
+# ---------- geometry --------------------------------------------------------
+# Usable area = focused monitor in logical px (scale + rotation applied) minus
+# reserved space (bars). Default panel: ~62% wide on 16:9, narrower on ultrawide,
+# near-full on small/portrait screens, clamped to min_width..max_width; height
+# fills the area below the top gap, leaving room for the strip under it.
+geometry() {
+  AW=$(( MW - RL - RR )); AH=$(( MH - RT - RB )); OX=$(( MX + RL )); OY=$(( MY + RT ))
+  STRIPH=$(( 44 + 10 + 12 ))   # strip + gaps (the shortcuts sheet opens above the strip)
+  read -r PW PH GAP < <(awk -v aw="$AW" -v ah="$AH" -v w="${S[width]}" -v h="${S[height]}" -v t="${S[top]}" \
+      -v mx="${S[max_width]%px}" -v mn="${S[min_width]%px}" -v sh="$STRIPH" '
+    function spec(v, total, auto) { if (v ~ /px$/) return v+0; if (v ~ /%$/) return total*(v+0)/100; if (v ~ /^[0-9.]+$/ && v+0 > 0) return (v+0 <= 1 ? total*v : v+0); return auto }
+    BEGIN {
+      r = aw/ah; fw = (aw < 1100 || r < 1) ? 0.94 : (aw < 1500 ? 0.88 : (r > 2.1 ? 0.45 : (r > 1.7 ? 0.62 : 0.70)))
+      if (mx !~ /^[0-9]+$/) mx = 1600; if (mn !~ /^[0-9]+$/) mn = 640; if (mn > mx) mn = mx
+      g = spec(t, ah, -1); if (g < 0) g = ah*0.03; if (g < 12) g = 12
+      W = spec(w, aw, aw*fw); if (W > mx) W = mx; if (W < mn) W = mn; if (W > aw - 24) W = aw - 24
+      H = spec(h, ah, ah - g - sh); if (H > ah - g - sh) H = ah - g - sh; if (H < 200) H = 200
+      printf "%d %d %d", W, H, g }')
+  SY=$(( OY + GAP )); EDGE=$(strip_edge)
+  [[ $EDGE == top ]] && SY=$(( OY + 10 + 44 + 20 + 6 ))   # strip + hint line on top, panel below
+  mkdir -p "$STATE/size"
+}
+size_file() { echo "$STATE/size/${classes[$1]}@$MON"; }
+size_for() { # per-agent size: saved (from user resizing) for this monitor, else the default; clamped to the area
+  local i=$1 c=${classes[$1]} w=$PW h=$PH f; f=$(size_file "$i")
+  [[ -f $f ]] && read -r w h < "$f"
+  is_int "$w" && is_int "$h" || { w=$PW; h=$PH; }
+  (( w > AW - 24 )) && w=$(( AW - 24 )); (( w < 320 )) && w=320
+  (( h > AH - GAP - STRIPH )) && h=$(( AH - GAP - STRIPH ))
+  [[ $EDGE == top ]] && (( h > OY + AH - SY - 12 )) && h=$(( OY + AH - SY - 12 )); (( h < 200 )) && h=200
+  TW[$c]=$w; TH[$c]=$h
+}
+slot_x() { echo $(( OX + (AW - TW[${classes[$1]}]) / 2 )); }
+# If the visible agent's size differs from what we gave it, the user resized it
+# (Omarchy's resize binds work on floating windows): remember it per agent+monitor.
+capture_user_size() {
+  visible || return 0
+  local i c; i=$(idx_of "$last"); [[ -n $i ]] || return 0; c=${classes[$i]}
+  [[ -n ${ADDR[$c]:-} && ${WSN[$c]} == "special:$WS" ]] || return 0
+  [[ -f $STATE/launch.$c ]] && return 0
+  local w=${WW[$c]:-0} h=${WH[$c]:-0}
+  (( w >= 320 && h >= 200 )) || return 0
+  local dw=$(( w - TW[$c] )) dh=$(( h - TH[$c] ))
+  (( ${dw#-} > 2 || ${dh#-} > 2 )) || return 0
+  echo "$w $h" > "$(size_file "$i")"; log "saved size ${names[$i]}@$MON: ${w}x$h"
+  size_for "$i"
+}
+reset_size() {
+  local i f; mkdir -p "$STATE/size"
+  if [[ -z ${1:-} || $1 == all ]]; then rm -f "$STATE/size/"*; echo "reset sizes for all agents"
+  else i=$(need_idx "$1") || exit 1; rm -f "$STATE/size/${classes[$i]}@"*; echo "reset size for ${names[$i]}"; fi
+  if visible; then for i in "${!names[@]}"; do size_for "$i"; done; i=$(idx_of "$last"); [[ -n $i ]] || return 0
+    local a; a=$(addr_of "$i"); [[ -n $a ]] && { ensure "$i"; move "$a" "$(slot_x "$i")"; flush; strip_show "$i"; }; fi
+}
+q() { LUA+="pcall(function() hl.dispatch($1) end) "; }     # queue a dispatcher
+flush() {
+  [[ -n $LUA ]] || return 0
+  local r; r=$(hyprctl eval "$LUA" 2>&1); [[ $r == ok || -z $r ]] || log "eval: ${r:0:300}"
+  LUA=""
+}
+idx_of() { local i; for i in "${!names[@]}"; do [[ ${names[$i]} == "$1" || ${classes[$i]} == "$1" ]] && { echo "$i"; return; }; done
+  [[ $1 =~ ^[0-9]+$ ]] && (( $1 < ${#names[@]} )) && echo "$1"; return 0; }
 visible() { (( VIS == 1 )); }
 addr_of() { echo "${ADDR[${classes[$1]}]:-}"; }
-prop() { q "hl.dsp.window.set_prop({ window = 'address:$1', prop = '$2', value = '$3' })"; }
-move() { q "hl.dsp.window.move({ window = 'address:$1', x = $2, y = $SY })"; }
+prop() { is_addr "$1" && q "hl.dsp.window.set_prop({ window = 'address:$1', prop = '$2', value = '$3' })"; }
+move() { is_addr "$1" && is_int "$2" && q "hl.dsp.window.move({ window = 'address:$1', x = $2, y = $SY })"; }
 teleport() { prop "$1" no_anim 1; move "$1" "$2"; prop "$1" no_anim 0; }
-left_of()  { echo $(( MX - $1 - 40 )); }   # just past the focused monitor's edges
-right_of() { echo $(( MX + MW + 40 )); }
-park_x() { local c=${classes[$1]}; (( $1 < $2 )) && left_of "${WW[$c]:-$PW}" || right_of; }
-keep_cursor() { q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; }   # hl.dsp.focus warps the pointer
-resolve_cmd() { # make the launch line independent of the caller's PATH:
-  # uwsm-app/systemd don't see mise/npm/~/.local/bin, so turn the program into an absolute path.
-  local -a t; read -r -a t <<<"$1"; local i x out=() done=0
-  for i in "${!t[@]}"; do x=${t[$i]}
-    if (( !done )); then case $x in uwsm-app|app2unit|setsid|env|--|omarchy-launch-tui|omarchy-launch-or-focus-tui|-*|*=*) out+=("$x"); continue ;; esac
-      x=${x/#\~/$HOME}; x=${x//\$HOME/$HOME}; [[ $x != */* ]] && x=$(command -v "$x" || echo "$x"); done=1; fi
-    out+=("$x"); done
-  echo "${out[*]}"
+left_of()  { echo $(( DX0 - $1 - 40 )); }   # outside the whole desktop, so neighbouring monitors never show it
+right_of() { echo $(( DX1 + 40 )); }
+park_x() { local c=${classes[$1]}; if (( $1 < $2 )); then left_of "${TW[$c]:-$PW}"; else right_of; fi; }
+anim_edge() { # anim_edge on|off: top strip -> panel drops in from the top and leaves upward; off restores the user's leaves
+  [[ $EDGE == top ]] || return 0
+  if [[ $1 == on ]]; then
+    # Leaves that aren't overridden report empty values: restore them with the nearest overridden parent's.
+    ANIM_SAVE=$(hyprctl animations -j 2>/dev/null | jq -r '(.[0] // []) as $a | ($a | map({key: .name, value: .}) | from_entries) as $m
+      | [ "specialWorkspaceIn", "specialWorkspaceOut" ][] as $n
+      | (first(($n, "specialWorkspace", "workspaces", "global") as $k | $m[$k] | select(. != null and .overridden == true)) // empty) as $v
+      | "hl.animation({ leaf = \"\($n)\", enabled = \($v.enabled), speed = \($v.speed), bezier = \"\($v.bezier)\", style = \"\($v.style)\" })"' 2>/dev/null | tr '\n' ' ')
+    LUA+="pcall(function() hl.animation({ leaf = 'specialWorkspaceIn', enabled = true, speed = 3, bezier = 'easeOutQuint', style = 'slidevert top' }) hl.animation({ leaf = 'specialWorkspaceOut', enabled = true, speed = 3, bezier = 'easeOutQuint', style = 'slidevert bottom' }) end) "
+  elif [[ -n ${ANIM_SAVE:-} ]]; then LUA+="pcall(function() $ANIM_SAVE end) "; fi
+}
+keep_cursor() { [[ -n $CURSOR ]] && q "hl.dsp.cursor.move({ x = ${CURSOR%%,*}, y = ${CURSOR##*, } })"; return 0; }   # hl.dsp.focus warps the pointer
+resolve_cmd() { # absolute path for the program word only; the rest of the line is kept verbatim
+  local pi x idx line=$1; pi=$(program_of "$line") || { echo "$line"; return; }
+  idx=${pi%% *}; x=${pi#* }; local y=${x/#\~/$HOME}; y=${y//\$HOME/$HOME}
+  [[ $y != */* ]] && y=$(find_prog "$y" || echo "$y")
+  [[ $x == "$y" ]] && { echo "$line"; return; }
+  # replace the idx-th word (first occurrence at a word boundary after the preceding words)
+  local -a t; read -r -a t <<<"$line"; local prefix="" j; for (( j=0; j<idx; j++ )); do prefix+="${t[$j]} "; done
+  local rest=${line#*"$prefix"}; rest=${rest#"$x"}
+  echo "$prefix$y$rest"
+}
+# Address of a client whose class or initialClass matches, ignoring case.
+# Cursor's Wayland app_id is "cursor" (product.json applicationName) while the
+# registry and the .desktop StartupWMClass say "Cursor".
+client_addr() {
+  hyprctl -j clients 2>/dev/null | jq -r --arg c "$1" 'first(.[] | select(
+    (((.class // "") | ascii_downcase) == ($c | ascii_downcase))
+    or (((.initialClass // "") | ascii_downcase) == ($c | ascii_downcase))
+  )) | .address // empty'
 }
 launch() { # launch <idx> in the background (never blocks); window rules put it in special:agents at the slot
-  local i=$1
-  [[ -f $STATE/launch.${classes[$i]} ]] && (( $(date +%s) - $(stat -c %Y "$STATE/launch.${classes[$i]}") < 30 )) && return 0
-  touch "$STATE/launch.${classes[$i]}"
-  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "${cmds[$i]}")" ) >/dev/null 2>&1 9>&- &
+  local i=$1 m=$STATE/launch.${classes[$1]}
+  [[ -f $m ]] && (( $(date +%s) - $(stat -c %Y "$m") < LAUNCH_TIMEOUT )) && return 0
+  local pi prog; pi=$(program_of "${cmds[$i]}") || true; prog=${pi#* }
+  # A second Cursor AppImage makes the running one quit. Its FUSE mount then
+  # disappears under helpers that are still mapped to it, and they die with SIGBUS.
+  if [[ ${prog##*/} == cursor ]] && pgrep -x cursor >/dev/null 2>&1; then
+    touch "$m"
+    log "launch ${names[$i]}: cursor is already running, not starting another copy"
+    return 0
+  fi
+  touch "$m"; log "launch ${names[$i]}: $(resolve_cmd "${cmds[$i]}")"
+  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "${cmds[$i]}")" ) >>"$STATE/log" 2>&1 9>&- &
 }
-await_window() { # background: when agent <idx> maps, focus + dim it if it's still the active tab
-  local i=$1 c=${classes[$1]} n=${names[$1]}
-  ( for _ in $(seq 150); do
-      a=$(hyprctl -j clients | jq -r --arg c "$c" 'first(.[]|select(.class==$c))|.address // empty'); [[ -n $a ]] && break; sleep 0.2; done
-    rm -f "$STATE/launch.$c"; [[ -n $a && $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
-    p=$(hyprctl cursorpos); l="hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) "
-    [[ ${S[dim]} == true ]] && l+="hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) "
+await_window() { # background: when agent <idx> maps, focus + dim it if still the active tab; report failures
+  local i=$1 c=${classes[$1]} n=${names[$1]} dim=${S[dim]} gx gy gw gh
+  gx=$(slot_x "$i"); gy=$SY; gw=${TW[${classes[$1]}]}; gh=${TH[${classes[$1]}]}
+  ( a=""; for _ in $(seq $((LAUNCH_TIMEOUT * 3))); do
+      a=$(client_addr "$c"); [[ -n $a ]] && break; sleep 0.33; done
+    rm -f "$STATE/launch.$c"
+    if [[ -z $a ]]; then log "launch failed: $n (no window with class $c after ${LAUNCH_TIMEOUT}s)"
+      notify-send -a "Agent switcher" -u normal "$n didn't start" "No window with class $c after ${LAUNCH_TIMEOUT}s. See omarchy-agents doctor." 2>/dev/null
+      timeout 2 omarchy-shell -q agentswitcher refresh >/dev/null 2>&1; exit 0; fi
+    is_addr "$a" || exit 0
+    [[ $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
+    p=$(hyprctl cursorpos)
+    l="pcall(function() hl.dispatch(hl.dsp.window.resize({ window = 'address:$a', x = $gw, y = $gh })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ window = 'address:$a', x = $gx, y = $gy })) end) "
+    l+="pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) "
+    [[ $p =~ ^-?[0-9]+,\ -?[0-9]+$ ]] && l+="pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) end) "
+    dim_modal && l+="pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) end) "
     hyprctl eval "$l" >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
 }
-starting() { notify-send -a "Agent switcher" -u low -t 2500 "Starting ${names[$1]}…" 2>/dev/null & }
-ensure() { # ensure <idx>: 0 = window exists (queued fixes), 2 = launching in background
+ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in background
   local i=$1 c=${classes[$1]} a
   a=${ADDR[$c]:-}
-  [[ -z $a ]] && { launch $i; return 2; }
+  [[ -z $a ]] && { launch "$i"; return 2; }
   [[ ${WSN[$c]} != "special:$WS" ]] && { q "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"; WSN[$c]=special:$WS; }
-  if (( ${WW[$c]:-0} != PW || ${WH[$c]:-0} != PH )); then q "hl.dsp.window.resize({ window = 'address:$a', x = $PW, y = $PH })"; WW[$c]=$PW; WH[$c]=$PH; fi
+  if (( ${WW[$c]:-0} != TW[$c] || ${WH[$c]:-0} != TH[$c] )); then q "hl.dsp.window.resize({ window = 'address:$a', x = ${TW[$c]}, y = ${TH[$c]} })"; WW[$c]=${TW[$c]}; WH[$c]=${TH[$c]}; fi
   return 0
 }
-dim_on() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; return 0; }
-payload() {
-  local i ic out="["; for i in "${!names[@]}"; do
-    ic=${icons[$i]}; if [[ -z $ic ]]; then :; elif [[ $ic == /* ]]; then ic="file://$ic"
-    elif [[ -f $DATA/icons/$ic.svg ]]; then ic="file://$DATA/icons/$ic.svg"; else ic="image://icon/$ic"; fi
-    out+="$(jq -cn --arg n "${names[$i]}" --arg i "$ic" '{name:$n,icon:$i}'),"; done; out="${out%,}]"
-  jq -cn --argjson a "$out" --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
-    --argjson top "$(( SY - MY + PH + 10 ))" --arg key "${S[toggle_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
-    --argjson hint "$(show_hint && echo true || echo false)" \
-    '{agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,prevKey:$pk,nextKey:$nk,hint:$hint}'
+# dim_around makes Hyprland treat the WHOLE monitor as the window's hit box (modal), so every click
+# outside the agent lands on it (with a resize cursor). With click_through we dim via
+# decoration:dim_special instead (set in agent_switcher.on), which leaves input alone.
+dim_modal() { [[ ${S[dim]} == true && ${S[click_through]} == false ]]; }
+dim_on() { if dim_modal; then prop "$1" dim_around 1; else prop "$1" dim_around 0; fi; return 0; }
+show_hint() { local v=${S[show_hint]:-true}; [[ $v == true || $v == on || $v == 1 ]]; }
+# ---------- usage meter (collectors vendored from auxxed/omarchy-agents, MIT) --
+USAGE_DIR=$HOME/.local/state/omarchy/agents/usage
+provider_of() { # usage provider for agent <idx>: 6th config field, else guessed from class/launch line
+  local i=$1 p=${providers[$1]:-} x; [[ -n $p ]] && { echo "$p"; return; }
+  x="${classes[$i]} ${cmds[$i]}"; x=${x,,}
+  case $x in grok-bot*|*" grok-bot"*|*/grok-bot*) echo grok-bot ;; *claude*) echo claude ;; *codex*) echo codex ;; *hermes*) echo hermes ;;
+    *gemini*) echo gemini ;; *opencode*) echo opencode ;; *grok*) echo grok ;; *) echo "" ;; esac
 }
-show_hint() { local v=${S[show_hint]:-${S[hint]:-true}}; [[ $v == true || $v == on || $v == 1 ]]; }
+usage_json() { # {provider: {p: highest limit fraction 0..1, t: "label pct"}} from the usage records; never prints tokens
+  [[ ${S[usage_display]} == off ]] && { echo '{}'; return; }
+  local -a f=(); local i p; for i in "${!names[@]}"; do p=$(provider_of "$i"); [[ -n $p && -f $USAGE_DIR/$p.json && ! -L $USAGE_DIR/$p.json ]] && f+=("$USAGE_DIR/$p.json"); done
+  (( ${#f[@]} )) || { echo '{}'; return; }
+  jq -cs '[ .[] | select(type=="object" and (.id|type)=="string") | . as $r
+      | ([.limits[]? | select((.percent|type)=="number" and .percent >= 0)] | max_by(.percent)) as $m
+      | select($m != null) | {key: $r.id, value: {p: ([$m.percent,1]|min), t: ("\($m.title // $m.label // "usage") \(($m.percent*100)|round)%" + (if (($r.usageStatusText // "") | length) > 0 then " · \($r.usageStatusText) (last known value)" else "" end))}} ] | from_entries' "${f[@]}" 2>/dev/null || echo '{}'
+}
+usage_refresh() { # usage_refresh [--force]: run collectors in the background at most every usage_refresh_min
+  [[ ${S[usage_display]} == off ]] && return 0
+  local stamp=$STATE/usage.stamp min; min=$(num "${S[usage_refresh_min]}" 10)
+  [[ ${1:-} == --open ]] && { (( ${min%.*} > 2 )) && min=2; shift; }   # opening the panel: refresh if older than 2 minutes
+  if [[ ${1:-} != --force && -f $stamp ]] && (( $(date +%s) - $(stat -c %Y "$stamp") < ${min%.*} * 60 )); then return 0; fi
+  local r=$DATA/collectors/refresh; [[ -x $r ]] || { log "usage: collectors not installed"; return 0; }
+  command -v python3 >/dev/null || return 0
+  touch "$stamp"; log "usage: refreshing"
+  # Collector output can contain account details: stdout/stderr are discarded, never logged.
+  local -a fa=(); [[ ${1:-} == --force ]] && fa=(--force)
+  ( timeout 120 "$r" "${fa[@]}" >/dev/null 2>&1; timeout 2 omarchy-shell -q agentswitcher refresh >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
+}
+
+# ---------- send to agent ---------------------------------------------------
+kind_of() { case ${cmds[$1]} in *launch-tui*|*alacritty*|*ghostty*|*kitty*|*foot*|*xdg-terminal-exec*) echo tui ;; *) echo gui ;; esac; }
+paste_into() { # paste_into <idx> <tui|gui>: background — wait for the window, focus it, send the paste keystroke
+  local i=$1 kind=$2 c=${classes[$1]}
+  ( a=""; for _ in $(seq $((LAUNCH_TIMEOUT * 3))); do
+      a=$(client_addr "$c"); [[ -n $a ]] && break; sleep 0.33; done
+    is_addr "$a" || { notify-send -a "Agent switcher" "Couldn't paste: ${names[$i]} has no window" 2>/dev/null; exit 0; }
+    sleep 0.3
+    hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end)" >/dev/null 2>&1; sleep 0.1
+    if command -v wtype >/dev/null; then
+      if [[ $kind == tui ]]; then wtype -M ctrl -M shift v -m shift -m ctrl; else wtype -M ctrl v -m ctrl; fi
+    elif command -v ydotool >/dev/null; then
+      if [[ $kind == tui ]]; then ydotool key 29:1 42:1 47:1 47:0 42:0 29:0; else ydotool key 29:1 47:1 47:0 29:0; fi
+    else
+      hyprctl dispatch sendshortcut "$([[ $kind == tui ]] && echo 'CTRL SHIFT' || echo CTRL), V, address:$a" >/dev/null 2>&1
+    fi
+    log "send: pasted into ${names[$i]} ($kind)" ) 9>&- >/dev/null 2>&1 &
+}
+open_on_idx() { # which agent the toggle opens when hidden: open_on = last | first | <name or class>
+  local o=${S[open_on]:-last} i
+  case $o in last) idx_of "$last" ;; first) echo 0 ;;
+    *) i=$(idx_of "$o"); if [[ -n $i ]]; then echo "$i"; else log "warning: open_on '$o' is not an available agent; opening the first"; echo 0; fi ;; esac
+}
+target_idx() { local i; i=$(idx_of "$last"); echo "${i:-0}"; }
+show_target() { local i=$1; if visible; then switch_to "$i"; else open_idx "$i"; fi; }
+send_text() { # send [--text <text>|-]: given text, else primary selection, else clipboard
+  command -v wl-copy >/dev/null || die "send needs wl-clipboard (wl-paste / wl-copy)"
+  local txt=""
+  if [[ ${1:-} == --text ]]; then if [[ ${2:--} == - ]]; then txt=$(cat); else txt=$2; fi
+  else txt=$(wl-paste -p -n 2>/dev/null); [[ -n $txt ]] || txt=$(wl-paste -n 2>/dev/null); fi
+  [[ -n $txt ]] || { notify-send -a "Agent switcher" "Nothing selected to send" 2>/dev/null; return 0; }
+  local i; i=$(target_idx)
+  printf '%s' "$txt" | wlc   # the agent pastes from the clipboard
+  show_target "$i"; paste_into "$i" "$(kind_of "$i")"
+  log "send: ${#txt} chars to ${names[$i]}"   # length only, never the text
+}
+send_files() { # send-files <agent|-> <path>...: GUI = uri-list (single image = image data), TUI = quoted paths
+  command -v wl-copy >/dev/null || die "send-files needs wl-clipboard"
+  local who=${1:--}; shift || true; (( $# )) || die "usage: send-files <agent|-> <path>..."
+  local i; if [[ $who == - ]]; then i=$(target_idx); else i=$(need_idx "$who") || exit 1; fi
+  local -a paths=(); local p; for p in "$@"; do p=$(readlink -f -- "$p") && [[ -e $p ]] && paths+=("$p"); done
+  (( ${#paths[@]} )) || die "send-files: no existing files given"
+  local kind; kind=$(kind_of "$i")
+  if [[ $kind == tui ]]; then printf '%q ' "${paths[@]}" | wlc
+  elif (( ${#paths[@]} == 1 )) && [[ ${paths[0],,} =~ \.(png|jpe?g|gif|webp)$ ]]; then
+    local ext=${paths[0]##*.}; ext=${ext,,}; [[ $ext == jpg ]] && ext=jpeg; wlc --type "image/$ext" < "${paths[0]}"
+  else printf '%s\n' "${paths[@]}" | jq -Rr '"file://" + (split("/") | map(@uri) | join("/"))' | wlc --type text/uri-list; fi
+  show_target "$i"; paste_into "$i" "$kind"; log "send-files: ${#paths[@]} file(s) -> ${names[$i]} ($kind)"
+}
+pretty() { local k=${1// /}; k=${k//SUPER/Super}; k=${k//SHIFT/Shift}; k=${k//ALT/Alt}; k=${k//CTRL/Ctrl}; k=${k//LEFT/←}; k=${k//RIGHT/→}; k=${k//UP/↑}; k=${k//DOWN/↓}; k=${k//SLASH//}; echo "$k"; }
+resize_binds() { # Omarchy's (or the user's) resizeactive binds, as "keys<TAB>action"
+  hyprctl binds -j 2>/dev/null | jq -r '
+    def mods: [ (if (.modmask/64|floor)%2==1 then "Super" else empty end), (if (.modmask/4|floor)%2==1 then "Ctrl" else empty end),
+                (if (.modmask/8|floor)%2==1 then "Alt" else empty end), (if .modmask%2==1 then "Shift" else empty end) ];
+    .[] | select(.submap=="" and ((.dispatcher // "") | test("resize"; "i")) and ((.description // "") | test("mouse"; "i") | not))
+    | "\((mods + [.key]) | join("+"))\t\(.description // ("resize " + (.arg // "")))"' 2>/dev/null | head -8
+}
+shortcuts_json() { # every switcher key, generated from the live config
+  local -a l=(); local i r
+  local oo=${S[open_on]:-last}; case $oo in last) oo="last agent" ;; first) oo="first tab" ;; esac
+  [[ -n ${S[toggle_key]} ]] && l+=("$(pretty "${S[toggle_key]}")" "Open / close the drop-down (opens: $oo)")
+  for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && l+=("$(pretty "${keys[$i]}")" "${names[$i]} (open / switch / close)"); done
+  [[ -n ${S[prev_key]} ]] && l+=("$(pretty "${S[prev_key]}")" "Previous agent (while open)")
+  [[ -n ${S[next_key]} ]] && l+=("$(pretty "${S[next_key]}")" "Next agent (while open)")
+  [[ -n ${S[send_key]} ]] && l+=("$(pretty "${S[send_key]}")" "Send selected text to the agent")
+  [[ -n ${S[shortcuts_key]} ]] && l+=("$(pretty "${S[shortcuts_key]}")" "This cheat sheet")
+  l+=("Scroll on strip" "Switch agent" "Click tab" "Switch to agent" "Right-click tab" "Restart / Close menu" "Middle-click tab" "Close agent")
+  l+=("← → / Tab / 1-9" "Switch (strip focused)" "?" "Shortcuts (strip focused)" "Esc" "Close sheet / menu / panel")
+  [[ ${S[usage_display]} != off ]] && l+=("Usage %" "Refreshes every ${S[usage_refresh_min]} min (and on open); can lag or differ slightly from the provider")
+  while IFS=$'	' read -r i r; do [[ -n $i ]] && l+=("$i" "Resize agent: $r (size is remembered)"); done < <(resize_binds)
+  l+=("omarchy-agents reset-size" "Forget remembered agent sizes")
+  l+=("Files: right-click → Send to agent" "Nautilus (--with-nautilus) / Open With → Send to agent")
+  l+=("Selected text" "Select it, then press send_key (omarchy-agents send)")
+  jq -cn '[$ARGS.positional | range(0; length; 2) as $j | {keys: .[$j], action: .[$j+1]}]' --args "${l[@]}"
+}
+# True when hicolor or pixmaps has this freedesktop icon name.
+theme_has_icon() {
+  local n=$1 base d size
+  [[ $n =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
+  local -a bases=("${XDG_DATA_HOME:-$HOME/.local/share}")
+  local IFS=:
+  for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do bases+=("$d"); done
+  IFS=$' \t\n'
+  for base in "${bases[@]}"; do
+    [[ -f $base/pixmaps/$n.png || -f $base/pixmaps/$n.svg || -f $base/pixmaps/$n.xpm ]] && return 0
+    for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512 scalable; do
+      [[ -f $base/icons/hicolor/$size/apps/$n.png || -f $base/icons/hicolor/$size/apps/$n.svg ]] && return 0
+    done
+  done
+  return 1
+}
+# Icon= from <prog>.desktop, searching XDG application dirs. Empty if none.
+desktop_icon() {
+  local prog=$1 dir f icon
+  [[ $prog =~ ^[A-Za-z0-9._+-]+$ ]] || return 0
+  local IFS=:
+  local -a dirs=("${XDG_DATA_HOME:-$HOME/.local/share}")
+  for dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do dirs+=("$dir"); done
+  IFS=$' \t\n'
+  for dir in "${dirs[@]}"; do
+    f=$dir/applications/$prog.desktop
+    [[ -f $f ]] || continue
+    icon=$(awk -F= 'BEGIN{IGNORECASE=1} $1 ~ /^[ \t]*Icon[ \t]*$/ { gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit }' "$f")
+    if [[ -n $icon ]]; then printf '%s\n' "$icon"; return 0; fi
+  done
+}
+# Tab image URL. A name that is not bundled and not in the icon theme falls back
+# to the launch program's desktop Icon= (Cursor's theme name is co.anysphere.cursor,
+# not "cursor"). Absolute paths and bundled svgs win.
+tab_icon() {
+  local ic=$1 cmd=$2 pi prog alt
+  [[ -z $ic ]] && return 0
+  if [[ $ic == /* ]]; then printf 'file://%s\n' "$ic"; return 0; fi
+  if [[ -f $DATA/icons/$ic.svg ]]; then printf 'file://%s\n' "$DATA/icons/$ic.svg"; return 0; fi
+  if [[ $ic =~ ^[A-Za-z0-9._+-]+$ ]] && ! theme_has_icon "$ic"; then
+    pi=$(program_of "$cmd") || true
+    prog=${pi#* }; prog=${prog##*/}
+    alt=$(desktop_icon "$prog")
+    if [[ $alt == /* && -f $alt ]]; then printf 'file://%s\n' "$alt"; return 0; fi
+    if [[ -n $alt ]] && theme_has_icon "$alt"; then ic=$alt; fi
+  fi
+  printf 'image://icon/%s\n' "$ic"
+}
+payload() { # one jq call: tabs (name, icon, running, starting) + strip settings + sequence number
+  local i ic st; local -a args=()
+  for i in "${!names[@]}"; do
+    ic=$(tab_icon "${icons[$i]}" "${cmds[$i]}")
+    st=stopped; [[ -n ${ADDR[${classes[$i]}]:-} ]] && st=running; [[ -f $STATE/launch.${classes[$i]} ]] && st=starting
+    args+=("${names[$i]}" "$ic" "$st" "$(provider_of "$i")" "$(status_of "${classes[$i]}")")
+  done
+  local uj; uj=$(usage_json)
+  jq -cn --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
+    --argjson top "$(strip_top "$1")" --arg edge "$EDGE" --arg key "${S[toggle_key]}" --arg sk "${S[shortcuts_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
+    --argjson hint "$(show_hint && echo true || echo false)" --argjson seq "$(date +%s%3N)" \
+    --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" --argjson u "$uj" \
+    --arg ud "${S[usage_display]}" --argjson uw "$(num "${S[usage_warn]}" 0.7)" --argjson uc "$(num "${S[usage_crit]}" 0.9)" --argjson ur "$(num "${S[usage_refresh_min]}" 10)" \
+    '[$ARGS.positional | range(0; length; 5) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2], status: .[$j+4], usage: ($u[.[$j+3]].p // -1), usageLabel: ($u[.[$j+3]].t // "")}] as $a
+     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,edge:$edge,toggleKey:$key,shortcutsKey:$sk,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet,usageDisplay:$ud,usageWarn:$uw,usageCrit:$uc,usageRefreshMin:$ur}' \
+    --args "${args[@]}"
+}
 # Strip updates go to the shell in the background so they never delay the slide.
-strip_show() { ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$(payload $1)" ) >/dev/null 2>&1 9>&- & }
+strip_show() { # after the strip maps, give the keyboard back to the agent window explicitly
+  local p a; p=$(payload "$1"); a=$(addr_of "$1")
+  ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p"
+    is_addr "$a" || exit 0
+    aw=$(hyprctl -j activewindow 2>/dev/null | jq -r '.workspace.name // "-"' 2>/dev/null)
+    [[ $aw == "special:$WS" || $aw == - || $aw == null ]] || exit 0   # something else took focus (link opened): leave it
+    cp=$(hyprctl cursorpos 2>/dev/null)
+    hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${cp%%,*}, y = ${cp##*, } })) end)" ) >/dev/null 2>&1 9>&- & }
 strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
+starting() { notify-send -a "Agent switcher" -u low -t 2000 "Starting ${names[$1]}…" 2>/dev/null 9>&- & }
 
 open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   local i=$1 a j b pending=0
-  ensure $i || pending=1; a=$(addr_of $i)
-  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
-    ensure $j; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
-  [[ -n $a ]] && { teleport "$a" "$SX"; dim_on "$a"; }
-  q "hl.dsp.workspace.toggle_special('$WS')"
-  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of $j); [[ -n $b ]] || continue
-    teleport "$b" "$(park_x $j $i)"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
+  ensure "$i" || pending=1; a=$(addr_of "$i")
+  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
+    ensure "$j"; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
+  [[ -n $a ]] && { teleport "$a" "$(slot_x "$i")"; dim_on "$a"; }
+  anim_edge on; q "hl.dsp.workspace.toggle_special('$WS')"; anim_edge off
+  for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
+    teleport "$b" "$(park_x "$j" "$i")"; prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; done
   [[ -n $a ]] && { q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
-  LUA+="if agent_switcher then agent_switcher.on() end "
+  LUA+="pcall(function() if agent_switcher then agent_switcher.on() end end) "
   flush
-  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show $i
-  (( pending )) && { starting $i; await_window $i; }
+  status_seen "$i"; echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
+  (( pending )) && { starting "$i"; await_window "$i"; }
+  usage_refresh --open
+  return 0
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
-  local i=$1 cur a b c from out pending=0
-  cur=$(idx_of "$last"); (( i == cur )) && { strip_show $i; return; }
-  ensure $i || pending=1; a=$(addr_of $i); b=$(addr_of $cur); c=${classes[$i]}
+  local i=$1 cur a b c from out pending=0 j x
+  status_seen "$i"; cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
+  ensure "$i" || pending=1; a=$(addr_of "$i"); b=$(addr_of "$cur"); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
-  (( i > cur )) && from=$(right_of) || from=$(left_of "${WW[$c]:-$PW}")
+  if (( i > cur )); then from=$(right_of); else from=$(left_of "${TW[$c]}"); fi
   [[ -n $a && ${WX[$c]:-x} != "$from" ]] && teleport "$a" "$from"
   if [[ -n $b ]]; then
-    (( i > cur )) && out=$(left_of "${WW[${classes[$cur]}]:-$PW}") || out=$(right_of)
+    if (( i > cur )); then out=$(left_of "${WW[${classes[$cur]}]:-${TW[${classes[$cur]}]}}"); else out=$(right_of); fi
     prop "$b" dim_around 0; move "$b" "$out"
   fi
-  [[ -n $a ]] && { move "$a" "$SX"; dim_on "$a"; q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
-  # other (non-adjacent) agents: make sure they wait on the correct side
-  local j x; for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of $j); [[ -n $x ]] || continue
-    [[ ${WX[${classes[$j]}]:-} != "$(park_x $j $i)" ]] && teleport "$x" "$(park_x $j $i)"; done
+  [[ -n $a ]] && { move "$a" "$(slot_x "$i")"; dim_on "$a"; q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
+  for j in "${!names[@]}"; do (( j == i || j == cur )) && continue; x=$(addr_of "$j"); [[ -n $x ]] || continue
+    [[ ${WX[${classes[$j]}]:-} != "$(park_x "$j" "$i")" ]] && teleport "$x" "$(park_x "$j" "$i")"; done
   flush
-  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show $i
-  (( pending )) && { starting $i; await_window $i; }   # new window appears in the slot (rules), no blocking
+  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
+  (( pending )) && { starting "$i"; await_window "$i"; }   # new window appears in the slot (rules), no blocking
   return 0
 }
 hide_all() {
-  visible && q "hl.dsp.workspace.toggle_special('$WS')"
-  LUA+="if agent_switcher then agent_switcher.off() end "; flush; strip_hide
+  visible && { anim_edge on; q "hl.dsp.workspace.toggle_special('$WS')"; anim_edge off; }
+  keep_cursor   # item 12: focus falls back to the previous window on hide and Hyprland warps the pointer to it
+  local j b; for j in "${!names[@]}"; do b=$(addr_of "$j"); [[ -n $b ]] && { prop "$b" opacity "$OA"; prop "$b" opacity_inactive "$OI"; }; done   # never leave one invisible
+  LUA+="pcall(function() if agent_switcher then agent_switcher.off() end end) "; flush; strip_hide
 }
-cycle_keys() { hyprctl eval "if agent_switcher then agent_switcher.$1() end" >/dev/null 2>&1; }
+cycle_keys() { hyprctl eval "pcall(function() if agent_switcher then agent_switcher.$1() end end)" >/dev/null 2>&1; }
 set_hint() { # hint on|off|toggle: persist show_hint in agents.conf and update the strip
   local v; case ${1:-toggle} in on|true) v=true ;; off|false) v=false ;; toggle) show_hint && v=false || v=true ;; *) die "usage: hint on|off|toggle" ;; esac
+  if [[ ! -f $CONF ]]; then mkdir -p "$(dirname "$CONF")"; if [[ -f $DATA/agents.conf.default ]]; then cp "$DATA/agents.conf.default" "$CONF"; else : > "$CONF"; fi; fi
   if grep -qE '^[[:space:]]*(show_hint|hint)[[:space:]]*=' "$CONF"; then
     sed -i -E "s/^([[:space:]]*)(show_hint|hint)([[:space:]]*)=[[:space:]]*[A-Za-z0-9]+/\1show_hint\3= $v/" "$CONF"
-  else sed -i "0,/^toggle_key/s//show_hint = $v\n&/" "$CONF"; grep -q '^show_hint' "$CONF" || echo "show_hint = $v" >> "$CONF"; fi
+  else echo "show_hint = $v" >> "$CONF"; fi
   S[show_hint]=$v; echo "hint $( [[ $v == true ]] && echo on || echo off)"
 }
+need_idx() { local r; r=$(idx_of "$1"); [[ -n $r ]] && { echo "$r"; return 0; }
+  echo "omarchy-agents: no available agent named '$1' (see: omarchy-agents list)" >&2; log "unknown agent '$1'"; return 1; }
 
 doctor() {
-  load_conf; echo "omarchy-agents $VERSION"; echo "config:   $CONF $([[ -f $CONF ]] || echo '(missing)')"; echo "rules:    $RULES $([[ -f $RULES ]] || echo '(missing)')"
-  echo "plugin:   $(omarchy-shell agentswitcher ping 2>/dev/null || echo 'not loaded (opens on first use)')"
-  local n; for n in "${all_names[@]}"; do [[ " ${names[*]} " == *" $n "* ]] && echo "  ok      $n" || echo "  missing $n (tab skipped)"; done
+  load_conf; local n c w
+  echo "omarchy-agents $VERSION"
+  echo "config:   $CONF $([[ -f $CONF ]] || echo '(missing)')"
+  echo "rules:    $RULES $([[ -f $RULES ]] || echo '(missing)')"
+  echo "plugin:   $(timeout 2 omarchy-shell agentswitcher ping 2>/dev/null || echo 'not loaded (opens on first use)')"
+  for c in hyprctl jq flock omarchy-shell notify-send; do command -v "$c" >/dev/null || echo "  MISSING dependency: $c"; done
+  timeout 2 omarchy-shell shell ping >/dev/null 2>&1 || echo "  warning: Omarchy shell not responding (omarchy-shell shell ping)"
+  for n in "${all_names[@]}"; do [[ " ${names[*]} " == *" $n "* ]] && echo "  ok      $n" || echo "  missing $n (program not found; tab skipped)"; done
+  for w in "${conf_warnings[@]}"; do echo "  warning: $w"; done
   echo "hyprland config errors:"; hyprctl configerrors
+  [[ -s $STATE/log ]] && { echo "recent log ($STATE/log):"; tail -n 8 "$STATE/log"; }
+  return 0
 }
 
-cmd=${1:-toggle}
-case $cmd in
-  rules) gen_rules; exit ;;
+# ---------- agent status (hooks, notifications) -------------------------------
+# One file per agent class: "<state> <epoch>". working | approval | error | done; idle = no file.
+STATUSD=$STATE/status
+status_prio() { case $1 in approval) echo 4 ;; error) echo 3 ;; done) echo 2 ;; working) echo 1 ;; *) echo 0 ;; esac; }
+# ---- notification sound on approval / error / done ----
+dnd_on() { # Omarchy shell's do-not-disturb (persisted by its notifications service), or mako's DND mode
+  local f=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/notifications.json
+  [[ $(jq -r '.dnd // false' "$f" 2>/dev/null) == true ]] && return 0
+  command -v makoctl >/dev/null 2>&1 && makoctl mode 2>/dev/null | grep -qx 'do-not-disturb' && return 0
+  return 1
+}
+agent_in_view() { # the real active window is this agent and is on screen (panel open, or on a normal workspace)
+  local aw ws; aw=$(hyprctl -j activewindow 2>/dev/null) || return 1
+  [[ $(jq -r '.class // "" | ascii_downcase' <<<"$aw" 2>/dev/null) == "${1,,}" ]] || return 1
+  ws=$(jq -r '.workspace.name // ""' <<<"$aw" 2>/dev/null)
+  [[ $ws != special:* ]] && return 0
+  [[ $(hyprctl -j monitors 2>/dev/null | jq -r --arg w "$ws" 'any(.[]; .specialWorkspace.name == $w)') == true ]]
+}
+sound_play() { # sound_play <class> <state>: decides and plays (in the background); every decision is logged
+  local c=$1 st=$2 mode=${S[sound]:-default} now last f id
+  case $st in approval|error|done) ;; *) return 0 ;; esac
+  [[ $mode == off ]] && return 0
+  if dnd_on; then log "sound: skip $c $st (do not disturb)"; return 0; fi
+  if agent_in_view "$c"; then log "sound: skip $c $st (tab in view)"; return 0; fi
+  now=$(date +%s%3N); last=$(cat "$STATE/sound-last" 2>/dev/null || echo 0)
+  if (( now - ${last:-0} < 3000 )); then log "sound: skip $c $st (rate limit)"; return 0; fi
+  echo "$now" > "$STATE/sound-last"
+  local -a cmd=()
+  if [[ $mode == chime ]]; then
+    f=$DATA/sounds/chime-$st.wav
+    if command -v pw-play >/dev/null; then cmd=(pw-play "$f"); elif command -v paplay >/dev/null; then cmd=(paplay "$f"); fi
+  else
+    [[ $st == 'done' ]] && id=complete || id=message-new-instant
+    f=/usr/share/sounds/freedesktop/stereo/$id.oga
+    if command -v pw-play >/dev/null && [[ -f $f ]]; then cmd=(pw-play "$f")   # fastest start
+    elif command -v paplay >/dev/null && [[ -f $f ]]; then cmd=(paplay "$f")
+    elif command -v canberra-gtk-play >/dev/null; then cmd=(canberra-gtk-play -i "$id" -d omarchy-agent-switcher); fi
+  fi
+  if [[ -n ${OA_SOUND_PLAYER:-} ]]; then
+    (( ${#cmd[@]} )) || cmd=("$f")   # tests still see the intended sound when no real player/file exists
+    cmd=("$OA_SOUND_PLAYER" "${cmd[@]}")
+  fi
+  (( ${#cmd[@]} )) || { log "sound: no player for $mode $st"; return 0; }
+  log "sound: play $c $st at $(date +%T.%3N): ${cmd[*]}"
+  ( timeout 5 "${cmd[@]}" >/dev/null 2>&1 & ) 9>&- 2>/dev/null
+  return 0
+}
+status_set() { # status_set <class> <state>
+  local c=$1 st=$2 prev
+  valid_class "$c" || return 1
+  prev=$(status_of "$c")
+  case $st in working|approval|error|done) mkdir -p "$STATUSD"; echo "$st $(date +%s)" > "$STATUSD/$c.tmp" && mv "$STATUSD/$c.tmp" "$STATUSD/$c" ;;
+    idle) rm -f "$STATUSD/$c" ;; *) return 1 ;; esac
+  log "status $c $st"
+  [[ $st != "$prev" ]] && sound_play "$c" "$st"
+  ( timeout 2 omarchy-shell -q agentswitcher status >/dev/null 2>&1 & ) 9>&- 2>/dev/null
+  return 0
+}
+status_of() { # effective state; a "working" with no news for status_stale_min minutes is idle
+  local st t
+  { read -r st t < "$STATUSD/$1"; } 2>/dev/null || { echo idle; return; }
+  if [[ $st == working ]] && (( $(date +%s) - ${t:-0} > $(num "${S[status_stale_min]}" 10 | cut -d. -f1) * 60 )); then echo idle; return; fi
+  case $st in working|approval|error|done) echo "$st" ;; *) echo idle ;; esac
+}
+status_seen() { [[ $(status_of "${classes[$1]}") == 'done' ]] && status_set "${classes[$1]}" idle; return 0; }
+status_json() {
+  local i out="" st top=idle
+  for i in "${!names[@]}"; do st=$(status_of "${classes[$i]}")
+    (( $(status_prio "$st") > $(status_prio "$top") )) && top=$st
+    out+="${out:+,}$(jq -cn --arg n "${names[$i]}" --arg c "${classes[$i]}" --arg s "$st" '{name:$n,class:$c,state:$s}')"; done
+  echo "{\"top\":\"$top\",\"agents\":[${out}]}"
+}
+class_for() { local i; for i in "${!names[@]}"; do [[ $(provider_of "$i") == "$1" ]] && { echo "${classes[$i]}"; return 0; }; done; return 1; }
+hook_event() { # hook <claude|codex|grok>: called by the agent's hook system with the event JSON on stdin; prints nothing
+  local tag=$1 in ev nt st c
+  in=$(timeout 2 cat 2>/dev/null)
+  # Grok Build also runs Claude's hooks; its payload is recognisable by the camelCase hookEventName key.
+  [[ $(jq -r 'has("hookEventName")' <<<"$in" 2>/dev/null) == true ]] && tag=grok
+  ev=$(jq -r '.hook_event_name // .hookEventName // empty' <<<"$in" 2>/dev/null)
+  local tool; tool=$(jq -r '.tool_name // .toolName // ""' <<<"$in" 2>/dev/null)
+  case $ev in
+    PreToolUse|pre_tool_use) case ${tool,,} in ask_user_question|askuserquestion|*__ask_user*) st=approval ;; *) st=working ;; esac ;;   # decision question waits on you
+    UserPromptSubmit|user_prompt_submit|PostToolUse|post_tool_use) st=working ;;
+    PermissionRequest|permission_request) st=approval ;;
+    Notification|notification)
+      nt=$(jq -r '[.notification_type, .notificationType, .type, .message] | map(select(. != null)) | join(" ")' <<<"$in" 2>/dev/null); nt=${nt,,}
+      case $nt in *permission*|*approv*|*question*|*elicitation*) st=approval ;; *) st='done' ;; esac
+      c=$(class_for "$tag") && [[ $st == 'done' && $(status_of "$c") == approval ]] && return 0 ;;   # an idle ping must not hide an open question
+    Stop|stop|StopCancelled|stop_cancelled) st='done' ;;
+    StopFailure|stop_failure|PostToolUseFailure) st=error ;;
+    SessionStart|session_start|SessionEnd|session_end) st=idle ;;
+    *) return 0 ;;
+  esac
+  c=$(class_for "$tag") || return 0
+  # PostToolUseFailure is a failed tool, not a failed turn: keep it "working".
+  [[ $ev == PostToolUseFailure ]] && st=working
+  status_set "$c" "$st"
+}
+notif_watch() { # Grok Bot has no hooks: a notification from it means a new reply is waiting
+  local c line want=0 app
+  c=$(class_for grok-bot) || { sleep 600; return 0; }
+  if [[ ${1:-} != --stdin ]]; then   # newest watcher wins: a shell/plugin reload can orphan the previous one
+    local p; for p in $(pgrep -u "$UID" -f 'omarchy-agents notif-watch$'; pgrep -u "$UID" -f "member='Notify'"); do
+      (( p != $$ )) && kill "$p" 2>/dev/null; done
+  fi
+  if [[ ${1:-} == --stdin ]]; then cat; else exec dbus-monitor --session "interface='org.freedesktop.Notifications',member='Notify'" 2>/dev/null; fi |
+  while IFS= read -r line; do
+    if [[ $line == *member=Notify* ]]; then want=1
+    elif (( want )) && [[ $line =~ ^[[:space:]]*string\ \"(.*)\"$ ]]; then
+      app=${BASH_REMATCH[1]}; want=0
+      [[ $app == "Grok Bot" ]] && status_set "$c" 'done'
+    fi
+  done
+}
+bak_path() { local b; b="$1.bak-agent-switcher-$(date +%Y%m%d%H%M%S)"; local n=$b k=1; while [[ -e $n ]]; do n="$b-$k"; k=$((k+1)); done; echo "$n"; }
+hook_targets() { # <file> <tag> <events...> for each agent we hook
+  local h=$HOME
+  echo "$h/.claude/settings.json claude UserPromptSubmit PreToolUse PermissionRequest Notification Stop SessionEnd"
+  echo "$h/.codex/hooks.json codex SessionStart UserPromptSubmit PreToolUse PermissionRequest Stop"
+  echo "$h/.grok/hooks/omarchy-agent-switcher.json grok UserPromptSubmit PreToolUse Notification Stop StopFailure StopCancelled SessionEnd"
+}
+OURS='test("omarchy-agents\"? hook ")'
+hooks_strip() { jq "if .hooks then .hooks |= (with_entries(.value |= (map(.hooks |= map(select((.command // \"\") | $OURS | not))) | map(select((.hooks | length) > 0)))) | with_entries(select((.value | length) > 0))) else . end | if .hooks == {} then del(.hooks) else . end"; }
+hooks_cmd() {
+  local f tag evs new cur bak bin=$HOME/.local/bin/omarchy-agents created=$STATE/hooks-created
+  mkdir -p "$STATE"; touch "$created"
+  while read -r f tag evs; do
+    if [[ $1 == install ]]; then
+      if [[ -f $f ]]; then cur=$(cat "$f"); jq -e . <<<"$cur" >/dev/null 2>&1 || { echo "skipped $f: not valid JSON" >&2; continue; }
+      else cur='{}'; grep -qxF "$f" "$created" || echo "$f" >> "$created"; fi
+      new=$(hooks_strip <<<"$cur" | jq --arg cmd "\"$bin\" hook $tag" --args '
+        reduce $ARGS.positional[] as $e (.; .hooks[$e] = ((.hooks[$e] // []) + [{hooks: [{type: "command", command: $cmd, timeout: 5}]}]))' $evs)
+    else
+      [[ -f $f ]] || continue; cur=$(cat "$f"); new=$(hooks_strip <<<"$cur") || continue
+    fi
+    [[ "$(jq -cS . <<<"$new")" == "$(jq -cS . <<<"$cur")" ]] && continue
+    if [[ $1 == uninstall ]] && grep -qxF "$f" "$created" && [[ $(jq -c . <<<"$new") == "{}" ]]; then
+      rm -f "$f"; grep -vxF "$f" "$created" > "$created.tmp"; mv "$created.tmp" "$created"; echo "removed $f"; continue; fi
+    if [[ -f $f ]]; then bak=$(bak_path "$f"); cp -p "$f" "$bak"; echo "backup $bak"; fi
+    mkdir -p "$(dirname "$f")"; jq . <<<"$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "$1 hooks: $f"
+  done < <(hook_targets)
+}
+bar_entry() { # add|remove our bar icon in shell.json: center section, directly left of the clock
+  local f=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json id=io.github.paytonorogers.agent-switcher cur new
+  [[ -f $f ]] || return 0; cur=$(cat "$f")
+  if [[ $1 == add ]]; then
+    new=$(jq --arg id "$id" 'if ([.bar.layout[]?[]?.id] | index($id)) then . else
+      .bar.layout.center = ((.bar.layout.center // []) as $r | ($r | map(.id) | index("omarchy.clock")) as $k
+        | if $k == null then [{id: $id}] + $r else $r[:$k] + [{id: $id}] + $r[$k:] end) end' <<<"$cur")
+  else new=$(jq --arg id "$id" 'if .bar.layout then .bar.layout |= map_values(map(select(.id != $id))) else . end' <<<"$cur"); fi
+  [[ -n $new && "$(jq -cS . <<<"$new")" != "$(jq -cS . <<<"$cur")" ]] || return 0
+  cp -p "$f" "$(bak_path "$f")"; echo "$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "bar icon $([[ $1 == add ]] && echo "added to" || echo "removed from") $f"
+}
+
+# Keep the log small.
+[[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
+
+action=${1:-toggle}
+case $action in
+  rules) gen_rules; [[ ${2:-} == --reload ]] && hyprctl reload >/dev/null 2>&1; exit 0 ;;
   setup) shift; setup "$@"; exit ;;
   doctor) doctor; exit ;;
-  list) load_conf; printf '%s\n' "${names[@]}"; exit ;;
-  version|--version) echo "$VERSION"; exit ;;
+  list) load_conf; printf '%s\n' "${names[@]}"; exit 0 ;;
+  version|--version) echo "$VERSION"; exit 0 ;;
   hint) ( load_conf; set_hint "${2:-toggle}" ) || exit 1
         if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
-          runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit ;;
+          runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit 0 ;;
+  -h|--help|help) sed -n '5,13p' "$0"; exit 0 ;;
+  status-set) load_conf; c=${2:-}; i=$(idx_of "$c"); [[ -n $i ]] && c=${classes[$i]}
+          status_set "$c" "${3:-}" || die "usage: status-set <agent> working|approval|error|done|idle"; exit 0 ;;
+  status) load_conf; if [[ ${2:-} == --json ]]; then status_json; else status_json | jq -r '.agents[] | "\(.name): \(.state)"'; fi; exit 0 ;;
+  hook)   load_conf 2>/dev/null; hook_event "${2:-}" 2>/dev/null; exit 0 ;;
+  notif-watch) load_conf; notif_watch "${2:-}"; exit 0 ;;
+  hooks)  load_conf; hooks_cmd "${2:-install}"; exit 0 ;;
+  bar-entry) bar_entry "${2:-add}"; exit 0 ;;
 esac
 runtime_init
-case $cmd in
-  toggle) if visible; then hide_all; else open_idx "$(idx_of "$last")"; fi ;;
-  show)   i=$(idx_of "${2:-$last}"); if visible; then switch_to $i; else open_idx $i; fi ;;
+case $action in
+  toggle) if visible; then hide_all; else open_idx "$(open_on_idx)"; fi ;;
+  show)   i=$(need_idx "${2:-$last}") || exit 1; if visible; then switch_to "$i"; else open_idx "$i"; fi ;;
   next|prev) visible || { cycle_keys off; strip_hide; wait; exit 0; }   # panel was closed some other way
-          i=$(idx_of "$last"); [[ $cmd == next ]] && i=$(( (i+1)%N )) || i=$(( (i-1+N)%N )); switch_to $i ;;
-  direct) i=$(idx_of "${2:-}")
-          if [[ ${3:-} == --start-hidden ]]; then for c in ${2//,/ }; do ensure "$(idx_of "$c")"; done; flush
-          elif visible && [[ ${names[$i]} == "$last" ]]; then hide_all
-          elif visible; then switch_to $i
-          else open_idx $i; fi ;;
-  hide)   hide_all ;;
-  autohide) # called by the strip on focus/workspace events: close if focus left the agents
-          # grace period after our own open/switch, and while an agent is still starting
-          (( $(date +%s%3N) - $(cat "$STATE/acted" 2>/dev/null || echo 0) < 1000 )) && exit 0
-          compgen -G "$STATE/launch.*" >/dev/null && [[ -n $(find "$STATE" -name 'launch.*' -newermt '-15 seconds' 2>/dev/null) ]] && exit 0
-          if ! visible; then LUA+="if agent_switcher then agent_switcher.off() end "; flush; strip_hide
+          i=$(idx_of "$last"); if [[ $action == next ]]; then i=$(( (i+1)%N )); else i=$(( (i-1+N)%N )); fi; switch_to "$i" ;;
+  direct) if [[ ${3:-} == --start-hidden ]]; then
+            for c in ${2//,/ }; do i=$(idx_of "$c"); [[ -n $i ]] && { ensure "$i" || true; }; done; flush
           else
-            aw=$(hyprctl -j activewindow | jq -r '"\(.address // "") \(.workspace.name // "")"'); read -r aa awn <<<"$aw"
-            [[ -n $aa && $aa != null && $awn != "special:$WS" ]] && hide_all
+            i=$(need_idx "${2:-}") || exit 1
+            if visible && [[ ${names[$i]} == "$last" ]]; then hide_all
+            elif visible; then switch_to "$i"
+            else open_idx "$i"; fi
           fi ;;
-  *) sed -n '5,10p' "$SELF" >&2; exit 2 ;;
+  close|restart)
+          i=$(need_idx "${2:-}") || exit 1; a=$(addr_of "$i")
+          [[ -n $a ]] && { q "hl.dsp.window.close({ window = 'address:$a' })"; flush; }
+          if [[ $action == restart ]]; then
+            for _ in $(seq 30); do sleep 0.2; [[ -z $(client_addr "${classes[$i]}") ]] && break; done
+            ADDR[${classes[$i]}]=""; rm -f "$STATE/launch.${classes[$i]}"
+            if visible && [[ ${names[$i]} == "$last" ]]; then launch "$i"; starting "$i"; await_window "$i"; else launch "$i"; fi
+          fi
+          visible && strip_show "$(idx_of "$last")" ;;
+  hide)   hide_all ;;
+  sheet-keys) # the strip reports the sheet opening/closing: add/remove the Esc bind
+          [[ ${2:-} == on ]] && on=true || on=false
+          hyprctl eval "pcall(function() if agent_switcher and agent_switcher.sheet_keys then agent_switcher.sheet_keys($on) end end)" >/dev/null 2>&1 ;;
+  sheet-close) timeout 2 omarchy-shell -q agentswitcher closeSheet >/dev/null 2>&1 ;;
+  evict)  # a window just mapped on special:agents: anything that isn't a configured agent
+          # (web app, browser, dialog from the launcher) goes to the regular workspace, panel hides
+          w=${2:-}; is_addr "$w" || exit 0
+          cj=$(hyprctl -j clients 2>/dev/null | jq -c --arg a "$w" 'first(.[] | select(.address == $a)) // empty' 2>/dev/null)
+          [[ -n $cj && $(jq -r '.workspace.name // ""' <<<"$cj") == "special:$WS" ]] || exit 0
+          wc=$(jq -r '.class // "" | ascii_downcase' <<<"$cj"); wi=$(jq -r '.initialClass // "" | ascii_downcase' <<<"$cj")
+          for c in "${classes[@]}"; do [[ ${c,,} == "$wc" || ${c,,} == "$wi" ]] && exit 0; done
+          tw=$(hyprctl -j monitors 2>/dev/null | jq -r --arg ws "special:$WS" 'first(.[] | select(.specialWorkspace.name == $ws) | .activeWorkspace.id // empty) // empty' 2>/dev/null)
+          [[ $tw =~ ^-?[0-9]+$ ]] || tw='e+0'
+          log "evict $w ($wc) -> workspace $tw"
+          hide_all
+          hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$tw', follow = false, window = 'address:$w' })) end) pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$w' })) end)" >/dev/null 2>&1 ;;
+  refocus) # the cheat sheet closed: hand the keyboard back from the strip to the active agent window
+          i=$(idx_of "$last"); a=$([[ -n $i ]] && addr_of "$i")
+          if visible && [[ -n $a ]]; then q "hl.dsp.focus({ window = 'address:$a' })"; flush; fi ;;
+  reset-size) reset_size "${2:-all}" ;;
+  send)   send_text "${@:2}" ;;
+  send-files) send_files "${@:2}" ;;
+  usage)  usage_refresh "${2:-}"; [[ ${2:-} == --print ]] && usage_json ;;
+  shortcuts) # toggle: if the sheet is already up, close it (the panel stays)
+    if visible && [[ $(timeout 2 omarchy-shell agentswitcher metrics 2>/dev/null) == *"sheet=true"* ]]; then
+      timeout 2 omarchy-shell -q agentswitcher shortcuts >/dev/null 2>&1; exit 0; fi
+    SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
+  geometry) i=$(idx_of "$last"); c=${classes[$i]}   # debug: computed layout for the focused monitor
+          echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(strip_top "$i") edge=$EDGE" ;;
+  autohide) # called by the strip on focus/workspace events: close if focus left the agents
+          (( $(date +%s%3N) - $(cat "$STATE/acted" 2>/dev/null || echo 0) < 1000 )) && exit 0   # our own open/switch
+          [[ -n $(find "$STATE" -maxdepth 1 -name 'launch.*' -newermt "-$LAUNCH_TIMEOUT seconds" 2>/dev/null) ]] && exit 0   # agent starting
+          if ! visible; then LUA+="pcall(function() if agent_switcher then agent_switcher.off() end end) "; flush; strip_hide
+          else
+            aw=$(hyprctl -j activewindow 2>/dev/null | jq -r '"\(.address // "-") \(.workspace.name // "-")"' 2>/dev/null); read -r aa awn <<<"${aw:-- -}"
+            # focus on a regular window, or on nothing at all (clicked empty desktop) => leave
+            if [[ $aa == - || $aa == null || -z $aa ]] || [[ $awn != "special:$WS" ]]; then hide_all; fi
+          fi ;;
+  *) sed -n '5,13p' "$0" >&2; exit 2 ;;
 esac
+exit 0

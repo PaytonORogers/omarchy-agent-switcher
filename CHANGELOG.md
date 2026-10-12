@@ -1,0 +1,54 @@
+# Changelog
+
+## 1.2.0 — 2026-10
+### Fixed (laptop testing)
+- After `send`, the switcher could stop responding (toggle/switch did nothing, strip stuck on screen): `wl-copy` daemonizes and inherited the state lock. It no longer does, and toggle/hide/autohide now force-close panel + strip if the lock is ever stuck.
+- Hovering a tab for its usage % no longer resizes the tab/strip (caused glitches at the strip edges); the % space is reserved.
+- Clicking a window outside the open panel now focuses it and closes the panel (`click_through`, on by default: special_fallthrough + click-to-focus only while open, restored on close). Moving the pointer off the agent does not; Hyprland's float-to-tile focus switch is disabled for that time too.
+- `omarchy plugin add` first load enables one agent (Grok Bot, else the first detected); the others are listed commented out in agents.conf and the notification says how to add more.
+- Installer: no false "install python-nautilus", "plugin not enabled" or empty-key warnings.
+### Changed
+- The "? shortcuts" button is replaced by a hint line under the tabs again (`show_hint`); `?` / `shortcuts_key` still open the sheet.
+- Screenshot sending (`send-shot` / `shot_key`) is deferred to a later version.
+### Added
+- `open_on = last|first|<agent>` chooses what the toggle opens (asked in the setup wizard; direct keys unaffected).
+- Send to agent: `send` (selection/clipboard, or `--text`), `send-files` (uri-list / image data / quoted paths); optional `send_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
+- Usage meter on tabs (fill/percent/off, warn/crit thresholds, lazy cached refresh) using Omarchy's usage records plus collectors vendored from auxxed/omarchy-agents (MIT). Optional provider field in agents.conf.
+- Status dots on each tab and a bar icon: working, approval (amber, including decision questions), error, and done. Claude, Codex, and Grok Build report through their hooks; Grok Bot uses its reply notification. An idle ping does not clear an open question.
+- Optional sound on approval, error, and done (`sound = default | chime | off`). Silent while do-not-disturb is on, while that agent's window is focused and on screen, and more than once per 3 seconds.
+- The strip follows the Omarchy bar (`strip_edge = auto | top | bottom`). With the bar on top, the panel drops in from the top.
+- A window that is not a configured agent and opens on the agent workspace is moved to the normal workspace and the panel hides.
+- Cursor's window class matches ignoring case, a second Cursor is not started, and its tab uses the real icon.
+
+## 1.1.0 — 2026-10
+### Fixed
+- `uninstall.sh` removes exactly its two lines from `hyprland.lua` (a missing marker could delete the rest of the file).
+- Config: one setting per line is documented; unknown settings and several-settings-per-line are reported.
+- Agent names/classes/keys are validated and Lua-escaped before going into the generated Hyprland include and `hyprctl eval`.
+- `show`/`direct` for an unknown or uninstalled agent now errors instead of silently acting on the first tab; `start_hidden` skips missing agents.
+- Every Hyprland dispatch is isolated (`pcall`), so one failure can't leave agent windows invisible; `hide` always restores opacity.
+- Strip updates carry a sequence number; out-of-order updates are dropped. Clicks and scrolls are never lost (one process per call); touchpad scrolling is throttled.
+- Cycle keys only restore an Omarchy default that was really bound; custom binds are no longer overwritten on close.
+- Generated binds always point at `~/.local/bin/omarchy-agents`.
+- Failed agent launches are detected (20 s) and reported by notification; the "starting" marker clears.
+- `slide_ms = 0` disables the slide instead of producing speed 0; tiny values are clamped.
+- Auto-hide also closes when focus goes to nothing (empty desktop).
+- Launch lines: only the program word is resolved; arguments and quoting are kept verbatim. Flatpak detection handles `flatpak run` options.
+- `hint` works without an existing config.
+- Extra agent search paths no longer shadow system tools.
+- Inactive agents park outside the whole desktop (no peeking onto neighbouring monitors).
+### Added
+- Install with `omarchy plugin add <url> --enable --yes`: manifest at the repo root, and the panel finishes setup on first load (once, via a marker). Thanks Theron Rogers (PR #1).
+- Smart default sizing from the focused monitor's logical size minus reserved bar space, with rotation support and `min_width`/`max_width` clamps; `width`/`height`/`top` accept `auto`, fractions, `%` or `px`.
+- Per-agent sizes: resize an agent with Omarchy's resize keys and it's remembered per monitor, centred, with the strip re-anchored; parking uses each agent's own width. `reset-size [name|all]`, `geometry`.
+- "? shortcuts" button replaces the hint line: a themed cheat sheet (from the live config, including your resize binds) via `?`, click, `omarchy-agents shortcuts` or optional `shortcuts_key`.
+- Theme-change hook regenerates border colours.
+- `override_slide_animation = false` keeps your own `windowsMove` animation.
+- `install.sh` preflight checks, atomic file swaps, `--no-restart`.
+- Log file + `OMARCHY_AGENTS_DEBUG=1`; `doctor` checks dependencies and shows recent log lines.
+- Tab states (running / starting / not started), right-click Restart/Close menu, middle-click close, keyboard focus ring, accessibility names.
+- `close`, `restart`, `version`, `rules --reload` subcommands.
+- Unit tests with a fake Hyprland (`tests/run.sh`), GitHub Actions CI, issue template, THIRD_PARTY.md.
+
+## 1.0.0
+- First public release.
