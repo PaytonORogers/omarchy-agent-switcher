@@ -81,7 +81,7 @@ class SetupLogin(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         calls = (self.fake / 'calls').read_text()
-        self.assertIn("hl.dsp.workspace('2')", calls)
+        self.assertIn("dispatch\tworkspace 2", calls)
         self.assertFalse((self.state / 'setup-login').exists())
 
     def test_skip_preserves_config_and_rules(self):
@@ -172,7 +172,10 @@ class SetupLogin(unittest.TestCase):
             self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
             self.assertNotIn('o.window(', self.rules.read_text())
             os.write(master, b'q\n')
-            proc.communicate(timeout=10)
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"termination timeout: parent status={proc.poll()}")
             self.assert_restored()
         finally:
             if proc.poll() is None:
@@ -200,7 +203,10 @@ class SetupLogin(unittest.TestCase):
                     output += os.read(proc.stdout.fileno(), 4096)
             self.assertIn(b'Enter to check/confirm', output)
             proc.send_signal(signal.SIGTERM)
-            proc.communicate(timeout=10)
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"termination timeout: parent status={proc.poll()}")
             self.assert_restored()
             self.assertEqual(self.conf.read_text(), self.original)
         finally:
