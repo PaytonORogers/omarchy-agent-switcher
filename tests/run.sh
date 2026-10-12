@@ -617,6 +617,12 @@ check "other open agents stay running" "! evals | grep -q \"window.close({ windo
 check "membership change hides stale strip" "grep -q 'agentswitcher hide' $FAKE/shell"
 : > "$FAKE/calls"; clients "class.b:0xb1:243"; $OA enable B >/dev/null
 check "enable never closes an agent" "! evals | grep -q \"window.close\""
+$OA disable B >/dev/null
+clients "class.b:0xb1:243" "class.c:0xc1:243"
+jq 'map(.workspace.name = "1")' "$FAKE/clients.json" > "$FAKE/normal.json"; mv "$FAKE/normal.json" "$FAKE/clients.json"
+: > "$FAKE/calls"; $OA disable B >/dev/null
+check "already-disabled detached window can be closed" "evals | grep -q \"window.close({ window = 'address:0xb1' })\""
+check "normal workspace's other agents stay open" "! evals | grep -q \"window.close({ window = 'address:0xc1' })\""
 
 echo "== interactive setup selections"
 setup_registry() {
