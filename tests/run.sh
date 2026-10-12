@@ -661,6 +661,9 @@ check "fresh gum setup preselects all" "grep -q -- '--selected A,B' $FAKE/gum &&
 echo 'only = B' >> "$C"; : > "$FAKE/gum"
 printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
 check "existing gum setup preselects current list" "grep -q -- '--selected B' $FAKE/gum && [[ \$($OA list) == B ]]"
+echo 'only = B, A' >> "$C"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "Enter keeps existing tab order in the ordering list" "[[ \$($OA list) == \$'B\nA' ]]"
 echo 'only = ' >> "$C"; cp "$C" "$T/before"; : > "$FAKE/gum"
 printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1 || true
 check "empty gum selection stays empty" "! grep -q -- '--selected' $FAKE/gum && cmp -s $C $T/before"
