@@ -212,6 +212,36 @@ class StripConfig(unittest.TestCase):
         self.assertIn('only = ', self.conf.read_text())
         self.assertIn('# A', self.conf.read_text())
 
+    def test_open_recovers_old_inactive_windows_without_closing_them(self):
+        self.conf.write_text('A | class.a | agent-a | |\n# B | class.b | agent-b | |\nonly = A\n')
+        clients = [
+            dict(class_='class.a', address='0xa1', workspace='2', floating=False),
+            dict(class_='CLASS.B', address='0xb1', workspace='special:agents'),
+            dict(class_='old-app', initialClass='class.b', address='0xb2', workspace='special:agents'),
+            dict(class_='browser', address='0xc1', workspace='special:agents'),
+            dict(class_='class.b', address='0xb3', workspace='3'),
+        ]
+        for client in clients:
+            client['class'] = client.pop('class_')
+            client['workspace'] = {'name': client['workspace']}
+            client.update(size=[800, 600], at=[0, 0])
+        (self.fake / 'clients.json').write_text(json.dumps(clients))
+        old_config = self.conf.read_text()
+        self.command('show', 'A')
+        calls = (self.fake / 'calls').read_text()
+        for address in ['0xb1', '0xb2']:
+            self.assertIn(f"workspace = 'special:agents-inactive', follow = false, window = 'address:{address}'", calls)
+        self.assertNotIn('window.close', calls)
+        self.assertNotIn('address:0xb3', calls)
+        self.assertNotIn('address:0xc1', calls)
+        self.assertIn("window.float({ window = 'address:0xa1', action = 'set' })", calls)
+        self.assertEqual(self.conf.read_text(), old_config)
+
+    def test_enabled_windows_never_go_to_inactive_parking(self):
+        (self.fake / 'clients.json').write_text('[{"class":"class.a","address":"0xa1","floating":true,"workspace":{"name":"special:agents"},"size":[800,600],"at":[0,0]},{"class":"class.b","address":"0xb1","floating":true,"workspace":{"name":"special:agents"},"size":[800,600],"at":[0,0]}]')
+        self.command('show', 'A')
+        self.assertNotIn('special:agents-inactive', (self.fake / 'calls').read_text())
+
     def test_unexpected_native_error_uses_confirmation(self):
         self.registry.write_text('codex | Codex | gui | bin:codex | class.codex | codex |\n')
         self.program('codex', 'echo "wrapper unavailable" >&2\nexit 1\n')

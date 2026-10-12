@@ -503,6 +503,20 @@ setup() {
 # clients + cursor, in parallel) and all window changes for one action go to
 # Hyprland as a single Lua chunk via `hyprctl eval`; each dispatch is pcall'd so
 # one failure can't strand windows half-way (e.g. invisible).
+inactive_panel_addresses() { # recognized agents left behind by an earlier config
+  local snapshot=$1 enabled=$2 known
+  known=$({
+    [[ ! -f $CONF ]] || awk -F'|' '{c=$2; gsub(/^[ \t]+|[ \t]+$/, "", c); if(c ~ /^[A-Za-z0-9._-]+$/) print c}' "$CONF"
+    [[ ! -f $REGISTRY ]] || awk -F'|' '{c=$5; gsub(/^[ \t]+|[ \t]+$/, "", c); if(c ~ /^[A-Za-z0-9._-]+$/) print c}' "$REGISTRY"
+  } | jq -Rsc 'split("\n") | map(select(length>0) | ascii_downcase) | unique')
+  jq -r --arg ws "special:$WS" --argjson known "$known" --argjson enabled "$enabled" '
+    ($enabled | map(ascii_downcase)) as $on
+    | .[] | select(.workspace.name==$ws)
+    | [(.class // "" | ascii_downcase), (.initialClass // "" | ascii_downcase)] as $classes
+    | select(any($classes[]; . as $c | $known | index($c)!=null))
+    | select(all($classes[]; . as $c | $on | index($c)==null))
+    | .address' "$snapshot"
+}
 runtime_init() {
   exec 9>"$STATE/lock"
   if ! flock -w 3 9; then
@@ -526,6 +540,8 @@ runtime_init() {
   last=$(cat "$STATE/last" 2>/dev/null || true); [[ -n $(idx_of "$last") ]] || last=${names[0]}
   CURSOR=$(<"$tmp.p"); [[ $CURSOR =~ ^-?[0-9]+,\ -?[0-9]+$ ]] || CURSOR=""
   local cls; cls=$(printf '%s\n' "${classes[@]}" | jq -R . | jq -sc .)
+  declare -ga INACTIVE_ADDRS=()
+  mapfile -t INACTIVE_ADDRS < <(inactive_panel_addresses "$tmp.c" "$cls")
   local out; out=$(jq -r -n --slurpfile m "$tmp.m" --slurpfile c "$tmp.c" --argjson cls "$cls" --arg ws "special:$WS" '
     def lw: if (.transform % 2)==1 then [.height,.width] else [.width,.height] end | map(. / 1);
     ($m[0] | first(.[]|select(.focused))) as $f
@@ -632,6 +648,17 @@ idx_of() { local i; for i in "${!names[@]}"; do [[ ${names[$i]} == "$1" || ${cla
 visible() { (( VIS == 1 )); }
 addr_of() { echo "${ADDR[${classes[$1]}]:-}"; }
 prop() { is_addr "$1" && q "hl.dsp.window.set_prop({ window = 'address:$1', prop = '$2', value = '$3' })"; }
+park_inactive() {
+  # A fresh/edited config can omit windows already parked by the old config.
+  # Keep them alive and reusable without displaying them over the enabled tab.
+  # Unrelated windows retain the upstream openwindow/evict handling.
+  local a
+  for a in "${INACTIVE_ADDRS[@]}"; do
+    is_addr "$a" || continue
+    prop "$a" dim_around 0
+    q "hl.dsp.window.move({ workspace = 'special:$WS-inactive', follow = false, window = 'address:$a' })"
+  done
+}
 move() { is_addr "$1" && is_int "$2" && q "hl.dsp.window.move({ window = 'address:$1', x = $2, y = $SY })"; }
 teleport() { prop "$1" no_anim 1; move "$1" "$2"; prop "$1" no_anim 0; }
 left_of()  { echo $(( DX0 - $1 - 40 )); }   # outside the whole desktop, so neighbouring monitors never show it
@@ -904,6 +931,7 @@ starting() { notify-send -a "Agent switcher" -u low -t 2000 "Starting ${names[$1
 
 open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   local i=$1 a j b pending=0
+  park_inactive
   ensure "$i" || pending=1; a=$(addr_of "$i")
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     ensure "$j"; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
@@ -921,7 +949,8 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
   local i=$1 cur a b c from out pending=0 j x
-  status_seen "$i"; cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
+  park_inactive
+  status_seen "$i"; cur=$(idx_of "$last"); (( i == cur )) && { flush; strip_show "$i"; return 0; }
   ensure "$i" || pending=1; a=$(addr_of "$i"); b=$(addr_of "$cur"); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
   if (( i > cur )); then from=$(right_of); else from=$(left_of "${TW[$c]}"); fi
@@ -1351,6 +1380,7 @@ runtime_init
 case $action in
   refresh) if visible; then
             i=$(idx_of "$last")
+            park_inactive
             for j in "${!names[@]}"; do a=$(addr_of "$j"); [[ -n $a ]] || continue
               teleport "$a" "$(park_x "$j" "$i")"; prop "$a" opacity "$OA"; prop "$a" opacity_inactive "$OI"; done
             a=$(addr_of "$i"); [[ -n $a ]] && { teleport "$a" "$(slot_x "$i")"; dim_on "$a"; }
