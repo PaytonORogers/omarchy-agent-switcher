@@ -4,6 +4,11 @@
 # Usage: tests/run.sh        (needs bash, jq, flock; luac optional for Lua syntax checks)
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+TEST_NODE=${OMARCHY_AGENTS_TEST_NODE:-$(command -v node 2>/dev/null || true)}
+# Resolve mise shims before test fixtures replace HOME/PATH.
+if [[ $TEST_NODE == */mise/* ]] && command -v mise >/dev/null; then
+  TEST_NODE=$(mise which node 2>/dev/null || printf '%s' "$TEST_NODE")
+fi
 PASS=0; FAILN=0
 ok() { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAILN=$((FAILN+1)); echo "  FAIL $1"; [[ -n ${2:-} ]] && echo "       $2"; }
@@ -674,7 +679,7 @@ check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.
 
 check "strip configuration regression suite" "python3 \"$ROOT/tests/strip-config.py\""
 
-check "theme roles and usage-fill contrast" "node \"$ROOT/tests/theme-contrast.js\""
+check "theme roles and usage-fill contrast" "\"$TEST_NODE\" \"$ROOT/tests/theme-contrast.js\""
 
 check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
 
