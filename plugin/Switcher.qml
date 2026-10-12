@@ -9,6 +9,11 @@ import qs.Commons as Commons
 // omarchy-agents script via `omarchy-shell shell summon <id> <payload>`.
 Item {
   id: root
+  property var shell: null
+  readonly property var idleService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.idle") : null
+  readonly property var lockService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.lock") : null
+  readonly property bool desktopBlocked: !!((idleService && (idleService.screensaverStartedThisCycle || idleService.screensaverWindowCount > 0)) || (lockService && lockService.locked))
+  onDesktopBlockedChanged: if (desktopBlocked) { close(); run(["hide"]) }
   property bool opened: false
   property var agents: []          // [{ name, icon, state: running|starting|stopped }]
   property string active: ""
@@ -77,6 +82,7 @@ Item {
   }
 
   function open(payloadJson) {
+    if (desktopBlocked) return
     try {
       var p = JSON.parse(payloadJson || "{}")
       // Updates are sent in the background; drop any that arrive out of order.
@@ -118,8 +124,9 @@ Item {
   function dismissControls() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
   function close() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
   function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
-  function controls(mode, name) { focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
+  function controls(mode, name) { if (desktopBlocked) return; focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
   function arrange(name) {
+    if (desktopBlocked) return
     controlMode = ""; menuFor = ""; sheet = false
     editAgent = name || active || (agents.length ? agents[0].name : "")
     if (!editAgent) return
@@ -139,6 +146,7 @@ Item {
   function mutate(args) { actionQueue = actionQueue.concat([args]); startAction() }
   function startAction() { if (actionProc.running || !actionQueue.length) return; var a = actionQueue[0]; actionQueue = actionQueue.slice(1); actionProc.command = [bin].concat(a); actionProc.running = true }
   function beginLogin(name, action) {
+    if (desktopBlocked) return
     if (loginProc.running) return
     loginCancelled = false
     pendingLoginAction = action || ""
@@ -190,7 +198,7 @@ Item {
     onExited: (code) => { if (code !== 0 && root.loginVisible) root.loginResult = {name:root.loginAgent,state:"failed",message:"Sign-in stopped. Retry or cancel."} }
   }
   SigninWindow {
-    visible: root.loginVisible
+    visible: root.loginVisible && !root.desktopBlocked
     result: root.loginResult
     background: root.bg; foreground: root.fg; accent: root.accent
     onActionRequested: (action) => root.loginAction(action)

@@ -9,6 +9,8 @@
 #   ./install.sh --with-nautilus   add "Send to agent" to the Nautilus right-click menu
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=share/desktop-state.sh
+source "$SRC/share/desktop-state.sh"
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher
 BIN=$HOME/.local/bin
@@ -109,11 +111,18 @@ fi
 echo ":: enabling shell plugin $ID"
 omarchy-shell -q shell rescanPlugins; sleep 1   # make the shell see the freshly copied plugin
 omarchy plugin enable "$ID" >/dev/null 2>&1 || omarchy-shell -q shell enablePlugin "$ID" '{}'
+if (( RESTART )) && ! desktop_ready; then
+  RESTART=0
+  echo "   (screensaver or lock active: shell restart skipped)"
+fi
 if (( RESTART )); then omarchy-restart-shell >/dev/null 2>&1 || true   # a full restart loads the panel reliably
 else echo "   (--no-restart: run omarchy-restart-shell to load the strip)"; fi
 ok=0; for _ in 1 2 3 4 5 6 7 8 9 10; do omarchy plugin list 2>/dev/null | grep -E "^${ID//./\\.}[[:space:]]+enabled" >/dev/null && { ok=1; break; }; sleep 0.5; done
 (( ok )) || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
 echo "done ($("$BIN/omarchy-agents" version)). Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Config: $CONF"
 
-(( GUI )) && "$BIN/omarchy-agents" configure
+if (( GUI )); then
+  if desktop_ready; then "$BIN/omarchy-agents" configure
+  else echo "First-run picker deferred. Return to the desktop and press Super+A."; fi
+fi
 exit 0

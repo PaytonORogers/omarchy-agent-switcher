@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pty
 import select
 import signal
 import subprocess
@@ -241,6 +242,50 @@ class StripConfig(unittest.TestCase):
         (self.fake / 'clients.json').write_text('[{"class":"class.a","address":"0xa1","floating":true,"workspace":{"name":"special:agents"},"size":[800,600],"at":[0,0]},{"class":"class.b","address":"0xb1","floating":true,"workspace":{"name":"special:agents"},"size":[800,600],"at":[0,0]}]')
         self.command('show', 'A')
         self.assertNotIn('special:agents-inactive', (self.fake / 'calls').read_text())
+
+    def test_screensaver_blocks_picker_and_panel_without_launching(self):
+        (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')
+        self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
+        for args in [('configure',), ('show', 'A'), ('toggle',)]:
+            self.command(*args)
+        self.conf.write_text('only = \n')
+        self.command('toggle')
+        self.assertFalse((self.fake / 'launch').exists())
+        self.assertFalse((self.fake / 'shell').exists())
+        self.assertFalse((self.fake / 'calls').exists())
+
+    def test_session_lock_and_missing_desktop_state_block_opening(self):
+        monitors = json.loads((self.fake / 'monitors.json').read_text())
+        monitors[0]['solitaryBlockedBy'] = ['LOCK']
+        (self.fake / 'monitors.json').write_text(json.dumps(monitors))
+        self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
+        self.command('configure'); self.command('show', 'A')
+        (self.fake / 'monitors.json').write_text('unavailable')
+        self.command('configure'); self.command('show', 'A')
+        self.assertFalse((self.fake / 'launch').exists())
+        self.assertFalse((self.fake / 'shell').exists())
+        self.assertFalse((self.fake / 'calls').exists())
+
+    def test_ready_desktop_allows_picker(self):
+        self.assertEqual(self.command('desktop-ready').returncode, 0)
+        self.command('configure')
+        self.assertIn('"picker":true', (self.fake / 'shell').read_text())
+
+    def test_installer_skips_restart_and_first_run_popup_over_screensaver(self):
+        (self.cfg / 'hypr/hyprland.lua').write_text('-- user config\n')
+        (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')
+        self.program('omarchy', 'if [ "$1 $2" = "plugin list" ]; then echo "io.github.paytonorogers.agent-switcher enabled"; fi\n')
+        master, slave = pty.openpty()
+        try:
+            result = subprocess.run([str(ROOT / 'install.sh'), '--setup'], env=self.env, stdin=slave, capture_output=True, text=True, timeout=20)
+        finally:
+            os.close(master); os.close(slave)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('shell restart skipped', result.stdout)
+        self.assertIn('First-run picker deferred', result.stdout)
+        self.assertNotIn('shell summon', (self.fake / 'shell').read_text())
+        other = (self.fake / 'other').read_text() if (self.fake / 'other').exists() else ''
+        self.assertNotIn('omarchy-restart-shell', other)
 
     def test_unexpected_native_error_uses_confirmation(self):
         self.registry.write_text('codex | Codex | gui | bin:codex | class.codex | codex |\n')

@@ -73,6 +73,7 @@ move_agent() {
   "$SELF" refresh >/dev/null 2>&1
 }
 configure_show() {
+  desktop_ready || return 0
   load_conf
   local payload mon top
   mon=$(hyprctl -j monitors | jq -c 'first(.[]|select(.focused))')
@@ -81,6 +82,7 @@ configure_show() {
   timeout 3 omarchy-shell -q shell summon "$PLUGIN_ID" "$payload"
 }
 login_window_command() {
+  desktop_ready || die "Return to the desktop before opening the agent."
   local row reg c line workspace=${2:-} address deadline
   [[ $workspace =~ ^[0-9]+$ ]] || die "normal workspace required"
   row=$(configuration_rows | jq -sc --arg n "${1,,}" 'first(.[]|select((.name|ascii_downcase)==$n or (.class|ascii_downcase)==$n)) // empty')

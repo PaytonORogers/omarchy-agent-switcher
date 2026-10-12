@@ -526,6 +526,10 @@ runtime_init() {
   fi
   local tmp=$STATE/snap.$$
   hyprctl -j monitors > "$tmp.m" & hyprctl -j clients > "$tmp.c" & hyprctl cursorpos > "$tmp.p" & wait
+  case ${cmd[0]} in
+    toggle|show|next|prev|direct|shortcuts|send|send-files|refresh|refocus)
+      if ! desktop_ready "$tmp.m" "$tmp.c"; then rm -f "$tmp".*; exit 0; fi ;;
+  esac
   load_conf; N=${#names[@]}
   if (( ! N )); then
     rm -f "$tmp".*
@@ -1346,9 +1350,14 @@ configure_source=$DATA/configure.sh
 [[ -f $configure_source ]] || configure_source=$(dirname "$(readlink -f "$0")")/../share/configure.sh
 # shellcheck source=../share/configure.sh
 source "$configure_source"
+desktop_source=$DATA/desktop-state.sh
+[[ -f $desktop_source ]] || desktop_source=$(dirname "$(readlink -f "$0")")/../share/desktop-state.sh
+# shellcheck source=../share/desktop-state.sh
+source "$desktop_source"
 
 action=${1:-toggle}
 case $action in
+  desktop-ready) desktop_ready; exit $? ;;
   rules) gen_rules; [[ ${2:-} == --reload ]] && hyprctl reload >/dev/null 2>&1; exit 0 ;;
   setup) shift; setup "$@"; exit ;;
   doctor) doctor; exit ;;
