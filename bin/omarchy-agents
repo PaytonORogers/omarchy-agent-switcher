@@ -128,10 +128,18 @@ declare -A OMARCHY_DEFAULT_DESC=( ["SUPER + ALT + LEFT"]="Move window to group o
 declare -A OMARCHY_DEFAULT_DSP=( ["SUPER + ALT + LEFT"]='hl.dsp.window.move({ into_group = "l" })' ["SUPER + ALT + RIGHT"]='hl.dsp.window.move({ into_group = "r" })' )
 gen_rules() {
   load_conf
+  local setup_pid setup_classes
+  if [[ -f $STATE/setup-login ]]; then
+    read -r setup_pid setup_classes < "$STATE/setup-login"
+    if [[ $setup_pid =~ ^[0-9]+$ ]] && kill -0 "$setup_pid" 2>/dev/null; then SETUP_LOGIN_CLASSES=$setup_classes; fi
+  fi
+  local rules_tmp=$RULES.tmp.$BASHPID
   local re="" c i a b w h t x sm ms
   a=$(accent); b=$(accent2); w=$(num "${S[width]}" 0.62); h=$(num "${S[height]}" 0.82); t=$(num "${S[top]}" 0.06)
   x=$(awk -v w="$w" 'BEGIN{printf "%.4f",(1-w)/2}')
-  for c in "${classes[@]}"; do re+="${re:+|}${c//./\\\\.}"; done
+  for c in "${classes[@]}"; do
+    [[ -n ${SETUP_LOGIN_CLASSES:-} && ",${SETUP_LOGIN_CLASSES,,}," == *",${c,,},"* ]] && continue
+    re+="${re:+|}${c//./\\\\.}"; done
   mkdir -p "$(dirname "$RULES")"
   local op; op=$(lq "${S[opacity]}"); [[ ${S[opacity]} =~ ^[0-9.]+( [0-9.]+)?$ ]] || op="0.82 0.75"
   {
@@ -146,7 +154,9 @@ gen_rules() {
     [[ -n ${S[send_key]} ]] && echo "ab(\"$(lq "${S[send_key]}")\", \"Send selection to agent\", \"$(lq "$SELF") send\")"
     [[ -n ${S[shortcuts_key]} ]] && echo "ab(\"$(lq "${S[shortcuts_key]}")\", \"Agent switcher shortcuts\", \"$(lq "$SELF") shortcuts\")"
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"$(lq "${keys[$i]}")\", \"$(lq "${names[$i]}") (agent switcher)\", \"$(lq "$SELF") direct ${classes[$i]}\")"; done
-    local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
+    local sh="" s; for s in ${S[start_hidden]//,/ }; do
+      [[ -n ${SETUP_LOGIN_CLASSES:-} && ",${SETUP_LOGIN_CLASSES,,}," == *",${s,,},"* ]] && continue
+       valid_class "$s" && sh+="${sh:+,}$s"; done
     [[ -n $sh ]] && echo "o.launch_on_start(\"$(lq "$SELF") direct $sh --start-hidden\")"
     # Panel slides from the strip's edge (Omarchy's default specialWorkspace slidevert comes from the bottom).
     if [[ ${S[override_slide_animation]} == true ]]; then
@@ -216,7 +226,7 @@ function agent_switcher.off()
     if s.ds ~= nil then pcall(function() hl.config({ decoration = { dim_special = s.ds } }) end) end end
 end
 LUA
-  } > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+  } > "$rules_tmp" && mv "$rules_tmp" "$RULES"
   echo "wrote $RULES"
   for k in "${S[prev_key]}" "${S[next_key]}"; do
     [[ -n $k ]] || continue; desc=$(bind_desc "$k")
@@ -258,6 +268,97 @@ agent_line() { # registry line -> agents.conf line
   printf '%-14s | %-26s | %s | %s | %s\n' "$n" "$c" "$l" "$k" "$ic"
 }
 have_gum() { [[ -z ${OMARCHY_AGENTS_NO_GUM:-} ]] && command -v gum >/dev/null; }   # OMARCHY_AGENTS_NO_GUM=1 forces plain prompts
+# Native checks intentionally discard all output: credentials never reach logs.
+# https://learn.chatgpt.com/docs/developer-commands (codex login status)
+# https://code.claude.com/docs/en/cli-reference (claude auth status)
+setup_auth_status() { # 0 signed in, 1 signed out, 2 unavailable/unsupported
+  local id=$1 prog rc
+  case $id in
+    codex) prog=$(find_prog codex) || return 2
+      timeout 10 "$prog" login status >/dev/null 2>&1; rc=$? ;;
+    claude) prog=$(find_prog claude) || return 2
+      timeout 10 "$prog" auth status >/dev/null 2>&1; rc=$? ;;
+    *) return 2 ;;
+  esac
+  case $rc in 0|1) return "$rc" ;; *) return 2 ;; esac
+}
+setup_restore_rules() {
+  [[ -n ${setup_rules_dir:-} ]] || return 0
+  if [[ -f $setup_rules_dir/rules ]]; then cp -p "$setup_rules_dir/rules" "$RULES"
+  else rm -f "$RULES"; fi
+  rm -f "$STATE/setup-login"
+  hyprctl reload >/dev/null 2>&1 || true
+  rm -rf "$setup_rules_dir"; setup_rules_dir=""
+}
+setup_login_window() { # registry line, normal workspace ID
+  local id n kind det c l ic address launchline
+  IFS='|' read -r id n kind det c l ic <<<"$1"
+  id=$(trim "$id"); c=$(trim "$c"); n=$(trim "$n")
+  address=$(client_addr "$c")
+  if [[ -n $address ]] && is_addr "$address"; then
+    hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$2', follow = false, window = 'address:$address' })) end) pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$address' })) end)" >/dev/null 2>&1
+    return
+  fi
+  launchline=$(agent_line "$1"); IFS='|' read -r _ _ l _ <<<"$launchline"; l=$(trim "$l")
+  # Avoid a second Cursor process even if its window has not mapped yet.
+  if [[ $id == cursor ]] && pgrep -x cursor >/dev/null 2>&1; then
+    echo "Cursor is already starting; finish signing in in its window."; return 0
+  fi
+  hyprctl eval "hl.dispatch(hl.dsp.workspace('$2'))" >/dev/null 2>&1 || return 1
+  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "$l")" ) >/dev/null 2>&1 8>&- 9>&- &
+}
+setup_login_gate() {
+  local f id n c reply status workspace
+  local -a verified=()
+  # Hide before excluding classes. Login never runs in the switcher overlay.
+  "$SELF" hide >/dev/null 2>&1 || true
+  exec 8>"$STATE/lock"
+  flock -n 8 || die "another switcher action is running; retry setup"
+  workspace=$(hyprctl -j monitors | jq -r 'first(.[] | select(.focused)).activeWorkspace.id // empty')
+  [[ $workspace =~ ^[0-9]+$ ]] || die "cannot determine a normal workspace for sign-in"
+  setup_rules_dir=$(mktemp -d "$STATE/setup-rules.XXXXXX")
+  [[ -f $RULES ]] && cp -p "$RULES" "$setup_rules_dir/rules"
+  trap setup_restore_rules EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM HUP
+  SETUP_LOGIN_CLASSES=""
+  for f in "${chosen[@]}"; do
+    IFS='|' read -r _ _ _ _ c _ <<<"$f"; c=$(trim "$c")
+    SETUP_LOGIN_CLASSES+="${SETUP_LOGIN_CLASSES:+,}$c"
+  done
+  printf '%s %s\n' "$BASHPID" "$SETUP_LOGIN_CLASSES" > "$STATE/setup-login"
+  ( gen_rules ) >/dev/null || die "cannot prepare sign-in rules"
+  hyprctl reload >/dev/null 2>&1 || die "cannot load sign-in rules"
+  [[ -z $(hyprctl configerrors | tr -d '[:space:]') ]] || die "sign-in rules have Hyprland errors"
+  for f in "${chosen[@]}"; do
+    IFS='|' read -r id n _ <<<"$f"; id=$(trim "$id"); n=$(trim "$n")
+    setup_auth_status "$id"; status=$?
+    if (( status == 0 )); then verified+=("$f"); echo "$n: signed in"; continue; fi
+    echo "$n: finish signing in in the normal window."
+    setup_login_window "$f" "$workspace" || die "cannot open $n for sign-in"
+    while true; do
+      read -r -p "$n: Enter to check/confirm, s to skip, q to cancel setup: " reply || return 1
+      case ${reply,,} in
+        q|quit) echo "Setup cancelled; config unchanged."; return 1 ;;
+        s|skip) echo "$n: skipped"; break ;;
+        '')
+          setup_auth_status "$id"; status=$?
+          if (( status == 0 )); then verified+=("$f"); break
+          elif (( status == 1 )); then echo "$n still reports signed out; finish login or skip."
+          else
+            read -r -p "No reliable login check for $n. Confirm it is ready to use? [y/N]: " reply || return 1
+            if [[ ${reply,,} == y || ${reply,,} == yes ]]; then verified+=("$f"); break; fi
+          fi ;;
+        *) echo "Use Enter, s, or q." ;;
+      esac
+    done
+  done
+  chosen=("${verified[@]}")
+  (( ${#chosen[@]} )) || { echo "No agents confirmed; config unchanged."; return 1; }
+  setup_restore_rules
+  trap - EXIT INT TERM HUP
+  unset SETUP_LOGIN_CLASSES
+}
 setup() {
   [[ -f $REGISTRY ]] || die "registry not found ($REGISTRY); run install.sh"
   local yes=0 dflt=0; [[ ${1:-} == --yes || ${1:-} == --detect || ${1:-} == --default || ! -t 0 ]] && yes=1
@@ -286,28 +387,34 @@ setup() {
       local -a gum=(gum choose --no-limit --header "Space toggles an agent. Enter keeps the checked ones.")
       (( ${#pre[@]} )) && selected="$(IFS=,; echo "${pre[*]}")"
       [[ -n $selected ]] && gum+=(--selected "$selected")
-      mapfile -t sel < <("${gum[@]}" "${labels[@]}")
+      local selection
+      selection=$("${gum[@]}" "${labels[@]}") || return 1
+      [[ -n $selection ]] && mapfile -t sel <<<"$selection"
     else
       for i in "${!labels[@]}"; do
         shown=0
         for n in "${pre[@]+"${pre[@]}"}"; do [[ $n == "${labels[$i]}" ]] && shown=1; done
-        if (( shown )); then read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}")
-        else read -r -p "  include ${labels[$i]}? [y/N] " a; [[ $a =~ ^[Yy] ]] && sel+=("${labels[$i]}"); fi
+        if (( shown )); then read -r -p "  include ${labels[$i]}? [Y/n] " a || return 1; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}")
+        else read -r -p "  include ${labels[$i]}? [y/N] " a || return 1; [[ $a =~ ^[Yy] ]] && sel+=("${labels[$i]}"); fi
       done
     fi
     (( ${#sel[@]} )) || die "nothing selected"
     ordered=("${sel[@]}")
     if (( ${#sel[@]} > 1 )); then
       for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
-      if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o; fi
+      if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o || return 1; fi
       if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
     fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi
+  if (( ! yes )); then
+    setup_login_gate || return 1
+    ordered=(); for f in "${chosen[@]}"; do ordered+=("$(trim "$(cut -d'|' -f2 <<<"$f")")"); done
+  fi
   local oo=last
   if (( ! yes )); then
     if have_gum; then oo=$(gum choose --header "Super+A opens…" "last" "first" "${ordered[@]}") || oo=last
-    else read -r -p "Super+A opens: last used agent, first tab, or an agent name [last]: " oo; fi
+    else read -r -p "Super+A opens: last used agent, first tab, or an agent name [last]: " oo || return 1; fi
     oo=$(trim "${oo:-last}"); [[ $oo == *"|"* || $oo == *"="* ]] && oo=last
   fi
   mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] && cp "$CONF" "$CONF.bak"

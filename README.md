@@ -62,6 +62,10 @@ omarchy-agents setup                  # checklist of everything detected (space 
 
 `only = Grok Bot, Claude Code` in `agents.conf` is the same list, in tab order. `setup` rewrites the agent lines from what you check and clears `only`. `setup --yes` still takes every detected agent.
 
+Interactive setup opens sign-in outside the panel before adding selected tabs. Codex and Claude Code use their native login-status commands; other agents require confirmation that they are ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
+
+`setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
+
 Detection uses
 `share/registry.conf`, one line per known agent:
 

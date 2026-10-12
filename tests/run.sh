@@ -36,7 +36,7 @@ CONF
 monitors() { # monitors <special-visible 0|1> [second monitor]
   local sp=""; [[ $1 == 1 ]] && sp="special:agents"
   local m2=""; [[ ${2:-} == 2 ]] && m2=',{"name":"HDMI-A-1","x":1280,"y":0,"width":1920,"height":1080,"scale":1,"transform":0,"focused":false,"specialWorkspace":{"name":""}}'
-  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
+  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"activeWorkspace\":{\"id\":2},\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
 }
 clients() { # clients "class:addr:x" ...
   local out="[" c; for c in "$@"; do IFS=: read -r cl ad x <<<"$c"
@@ -562,7 +562,7 @@ check "missing open_on agent logged" "grep -q \"open_on 'Nope'\" $XDG_STATE_HOME
 monitors 1; : > "$FAKE/calls"; $OA direct class.b >/dev/null 2>&1
 check "direct keys unaffected by open_on" "evals | grep -q \"address:0xb1', x = 243\""
 setup_world; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
-printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+printf 'codex | A | tui | bin:agent-a | class.a | | \nclaude | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 script -qc "printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup" /dev/null >/dev/null 2>&1 || printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup >/dev/null 2>&1
 check "wizard writes open_on" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
 
@@ -611,9 +611,10 @@ check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
 
 echo "== interactive setup selections"
 setup_registry() {
+  for native in codex claude; do printf '#!/bin/sh\nexit 0\n' > "$T/agents/$native"; chmod +x "$T/agents/$native"; done
   mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
   cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
-  printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+  printf 'codex | A | tui | bin:agent-a | class.a | | \nclaude | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 }
 interactive_setup() {
   printf '%s' "$1" | OMARCHY_AGENTS_NO_GUM=1 script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
@@ -650,6 +651,7 @@ printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1 || true
 check "empty gum selection stays empty" "! grep -q -- '--selected' $FAKE/gum && cmp -s $C $T/before"
 setup_world; echo 'only = cLaSs.C, a' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \$'C\nA' ]]"
+check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
 echo
 echo "passed: $PASS  failed: $FAILN"
