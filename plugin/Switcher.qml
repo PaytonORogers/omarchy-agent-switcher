@@ -350,7 +350,7 @@ Item {
       anchors.topMargin: root.edge === "top" ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: grid.implicitWidth + 28
-      height: grid.implicitHeight + sheetTitle.implicitHeight + 30
+      height: grid.implicitHeight + sheetHeader.height + 30
       radius: 14
       color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.94)
       border.width: 2
@@ -358,10 +358,15 @@ Item {
       Accessible.role: Accessible.Dialog
       Accessible.name: "Agent switcher shortcuts"
       MouseArea { anchors.fill: parent; onClicked: root.hideSheet() }
-      Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Commons.Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
+      Row {
+        id: sheetHeader
+        x: 14; y: 10; width: parent.width - 28; height: 30; spacing: 8
+        Text { width: parent.width - sheetCloseButton.width - 8; text: "Agent switcher shortcuts"; color: root.accent; font.family: Commons.Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+        CloseButton { id: sheetCloseButton; Accessible.name: "Close shortcuts"; background: root.bg; foreground: root.fg; accent: root.accent; onClicked: root.hideSheet() }
+      }
       Grid {
         id: grid
-        x: 14; anchors.top: sheetTitle.bottom; anchors.topMargin: 8
+        x: 14; anchors.top: sheetHeader.bottom; anchors.topMargin: 8
         columns: 2; columnSpacing: 18; rowSpacing: 4
         Repeater {
           model: root.shortcuts.length * 2

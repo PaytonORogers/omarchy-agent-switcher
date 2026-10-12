@@ -23,9 +23,9 @@ FloatingWindow {
     Keys.onEscapePressed: root.actionRequested("cancel")
     Row {
       width: parent.width; spacing: 8
-      Text { width: parent.width - hideButton.width - closeButton.width - 16; text: "Add " + (root.result.name || "agent"); color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+      Text { width: parent.width - closeButton.width - (hideButton.visible ? hideButton.width + 16 : 8); text: "Add " + (root.result.name || "agent"); color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
       ControlButton { id: hideButton; visible: root.canHide; width: visible ? implicitWidth : 0; text: "Hide"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.actionRequested("hide") }
-      ControlButton { id: closeButton; text: "×"; Accessible.name: "Cancel adding agent"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.actionRequested("cancel") }
+      CloseButton { id: closeButton; Accessible.name: "Cancel adding agent"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.actionRequested("cancel") }
     }
     Text {
       width: parent.width; wrapMode: Text.WordWrap

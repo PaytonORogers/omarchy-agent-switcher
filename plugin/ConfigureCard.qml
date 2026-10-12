@@ -31,7 +31,7 @@ Rectangle {
     Row {
       width: parent.width; spacing: 8
       Text { id: title; width: parent.width - closeButton.width - 8; text: root.mode === "add" ? "Add an installed agent" : root.mode === "tab" ? root.agent : "Agent settings"; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 14; font.bold: true; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
-      ControlButton { id: closeButton; width: 30; text: "×"; Accessible.name: "Close"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.dismissed() }
+      CloseButton { id: closeButton; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.dismissed() }
     }
     Text { visible: root.error !== ""; width: parent.width; wrapMode: Text.WordWrap; text: root.error; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 12 }
     Flickable {
