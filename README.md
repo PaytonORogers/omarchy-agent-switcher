@@ -4,7 +4,18 @@ One hotkey for all your AI agents on [Omarchy](https://omarchy.org). Press **Sup
 drop-down panel slides up with your agent. A small tab strip under it switches between Grok Bot,
 Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding sideways in tab order.
 
-<!-- Demo GIF coming soon: docs/demo.gif -->
+## Demo
+
+> **Illustrations, not screen recordings.** These are rendered mock-ups of the panel and strip with stand-in agent windows; the real UI may differ slightly.
+
+| Open / close (Super+A) | Switch agents |
+|---|---|
+| ![Super+A opens and closes the drop-down panel](docs/media/agent-switcher-1-open-close.gif) | ![Switching agents slides sideways in tab order](docs/media/agent-switcher-2-switch.gif) |
+| **Usage meter** (hover a tab for the percent) | **Shortcuts sheet** (Super+/) |
+| ![Hovering a tab shows its usage percent](docs/media/agent-switcher-3-usage-hover.gif) | ![Super+/ opens the shortcuts sheet above the strip](docs/media/agent-switcher-4-shortcuts.gif) |
+| **Status dots** on each tab | **Status tooltip** (hover the bar icon) |
+| ![Status dots on tabs for working, question, error, done](docs/media/agent-switcher-5-status-dots.gif) | ![Hovering the bar icon shows a status tooltip](docs/media/agent-switcher-6-status-tooltip.gif) |
+
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
