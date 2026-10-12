@@ -944,7 +944,6 @@ bar_entry() { # add|remove our bar icon in shell.json: center section, directly 
 # Keep the log small.
 [[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
 
-lower() { printf '%s' "${1,,}"; }
 same_agent() { # same_agent <want> <name> <class>
   local w n c
   w=${1,,}; n=${2,,}; c=${3,,}

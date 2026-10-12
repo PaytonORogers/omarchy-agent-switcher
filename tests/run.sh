@@ -12,6 +12,8 @@ check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 # Fresh fake world: HOME, config, fake agent binaries, fake hyprland state.
 setup_world() {
   T=$(mktemp -d); export HOME=$T/home FAKE=$T/fake XDG_CONFIG_HOME=$T/home/.config XDG_STATE_HOME=$T/home/.local/state XDG_DATA_HOME=$T/home/.local/share
+  export XDG_RUNTIME_DIR=$T/runtime
+  mkdir -p "$XDG_RUNTIME_DIR"
   unset OMARCHY_AGENTS_CONF
   mkdir -p "$HOME/.local/bin" "$FAKE" "$XDG_CONFIG_HOME/omarchy-agent-switcher" "$XDG_CONFIG_HOME/hypr" "$T/agents"
   export PATH="$ROOT/tests/stubs:$T/agents:/usr/bin:/bin"
@@ -606,6 +608,48 @@ check "empty only shows nothing" "[[ -z \$($OA list) ]]"
 check "unknown disable fails" "! $OA disable Nope"
 sed -i 's/^only = .*/only = C, A/' "$C"
 check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
+
+echo "== interactive setup selections"
+setup_registry() {
+  mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
+  cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
+  printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+}
+interactive_setup() {
+  printf '%s' "$1" | OMARCHY_AGENTS_NO_GUM=1 script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+}
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; rm "$C"
+interactive_setup $'\n\n\n\n'
+check "fresh plain setup Enter selects all" "[[ \$($OA list) == \$'A\nB' ]] && grep -q '\\[Y/n\\]' $T/setup.out"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; echo 'only = B' >> "$C"
+interactive_setup $'\n\n\n'
+check "existing plain setup Enter preserves selection" "[[ \$($OA list) == B ]]"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; echo 'only = ' >> "$C"; cp "$C" "$T/before"
+interactive_setup $'\n\n' || true
+check "empty selection does not enable agents or overwrite config" "cmp -s $C $T/before && [[ -z \$($OA list) ]]"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; rm "$C"
+cat > "$T/agents/gum" <<'GUM'
+#!/usr/bin/env bash
+if [[ $1 == input ]]; then exit 0; fi
+if [[ " $* " == *" --no-limit "* ]]; then
+  printf '%s\n' "$*" >> "$FAKE/gum"
+  while (( $# )); do
+    if [[ $1 == --selected ]]; then printf '%s\n' "${2//,/$'\n'}"; exit 0; fi
+    shift
+  done
+else echo last; fi
+GUM
+chmod +x "$T/agents/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "fresh gum setup preselects all" "grep -q -- '--selected A,B' $FAKE/gum && [[ \$($OA list) == \$'A\nB' ]]"
+echo 'only = B' >> "$C"; : > "$FAKE/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "existing gum setup preselects current list" "grep -q -- '--selected B' $FAKE/gum && [[ \$($OA list) == B ]]"
+echo 'only = ' >> "$C"; cp "$C" "$T/before"; : > "$FAKE/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1 || true
+check "empty gum selection stays empty" "! grep -q -- '--selected' $FAKE/gum && cmp -s $C $T/before"
+setup_world; echo 'only = cLaSs.C, a' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \$'C\nA' ]]"
 
 echo
 echo "passed: $PASS  failed: $FAILN"
