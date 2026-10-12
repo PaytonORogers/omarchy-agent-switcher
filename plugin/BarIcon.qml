@@ -10,24 +10,24 @@ BarWidget {
   id: root
   moduleName: "io.github.paytonorogers.agent-switcher"
 
-  readonly property string bin: Quickshell.env("HOME") + "/.local/bin/omarchy-agents"
-  property string top: "idle"
+  readonly property string oaBin: Quickshell.env("HOME") + "/.local/bin/omarchy-agents"
+  property string topState: "idle"
   property var agents: []
 
-  function color(s) { return s === "approval" ? "#E3A23B" : s === "error" ? "#E5534B" : s === "done" ? "#57AB5A" : "#9B7BD4" }
+  function stateColor(s) { return s === "approval" ? "#E3A23B" : s === "error" ? "#E5534B" : s === "done" ? "#57AB5A" : "#9B7BD4" }
   function label(s) { return s === "approval" ? "waiting for approval" : s === "error" ? "error" : s === "done" ? "done, waiting on you" : s === "working" ? "working" : "idle" }
   function parse(text) {
-    try { var j = JSON.parse(String(text || "{}")); top = j.top || "idle"; agents = j.agents || [] } catch (e) {}
+    try { var j = JSON.parse(String(text || "{}")); topState = j.top || "idle"; agents = j.agents || [] } catch (e) {}
   }
 
   implicitWidth: btn.implicitWidth
   implicitHeight: btn.implicitHeight
 
-  Process { id: poll; command: [root.bin, "status", "--json"]
+  Process { id: poll; command: [root.oaBin, "status", "--json"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.parse(text) } }
   Timer { interval: Math.max(500, root.setting("pollMs", 2000)); running: true; repeat: true; triggeredOnStart: true
     onTriggered: if (!poll.running) poll.running = true }
-  Process { id: toggler; command: [root.bin, "toggle"] }
+  Process { id: toggler; command: [root.oaBin, "toggle"] }
 
   BarIconButton {
     id: btn
@@ -39,15 +39,15 @@ BarWidget {
   }
   Rectangle {
     id: dot
-    visible: root.top !== "idle"
+    visible: root.topState !== "idle"
     width: 6; height: 6; radius: 3
-    color: root.color(root.top)
+    color: root.stateColor(root.topState)
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.horizontalCenterOffset: 7
     anchors.verticalCenter: parent.verticalCenter
     anchors.verticalCenterOffset: -6
     SequentialAnimation on opacity {
-      running: root.top === "working"; loops: Animation.Infinite
+      running: root.topState === "working"; loops: Animation.Infinite
       NumberAnimation { to: 0.3; duration: 700 } NumberAnimation { to: 1; duration: 700 }
       onRunningChanged: if (!running) dot.opacity = 1
     }

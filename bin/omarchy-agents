@@ -718,7 +718,7 @@ status_set() { # status_set <class> <state>
 }
 status_of() { # effective state; a "working" with no news for status_stale_min minutes is idle
   local st t
-  read -r st t < "$STATUSD/$1" 2>/dev/null || { echo idle; return; }
+  { read -r st t < "$STATUSD/$1"; } 2>/dev/null || { echo idle; return; }
   if [[ $st == working ]] && (( $(date +%s) - ${t:-0} > $(num "${S[status_stale_min]}" 10 | cut -d. -f1) * 60 )); then echo idle; return; fi
   case $st in working|approval|error|done) echo "$st" ;; *) echo idle ;; esac
 }
@@ -756,6 +756,10 @@ hook_event() { # hook <claude|codex|grok>: called by the agent's hook system wit
 notif_watch() { # Grok Bot has no hooks: a notification from it means a new reply is waiting
   local c line want=0 app
   c=$(class_for grok-bot) || { sleep 600; return 0; }
+  if [[ ${1:-} != --stdin ]]; then   # newest watcher wins: a shell/plugin reload can orphan the previous one
+    local p; for p in $(pgrep -u "$UID" -f 'omarchy-agents notif-watch$'; pgrep -u "$UID" -f "member='Notify'"); do
+      (( p != $$ )) && kill "$p" 2>/dev/null; done
+  fi
   if [[ ${1:-} == --stdin ]]; then cat; else exec dbus-monitor --session "interface='org.freedesktop.Notifications',member='Notify'" 2>/dev/null; fi |
   while IFS= read -r line; do
     if [[ $line == *member=Notify* ]]; then want=1
@@ -802,7 +806,7 @@ bar_entry() { # add|remove our bar icon in shell.json: center section, directly 
         | if $k == null then [{id: $id}] + $r else $r[:$k] + [{id: $id}] + $r[$k:] end) end' <<<"$cur")
   else new=$(jq --arg id "$id" 'if .bar.layout then .bar.layout |= map_values(map(select(.id != $id))) else . end' <<<"$cur"); fi
   [[ -n $new && "$(jq -cS . <<<"$new")" != "$(jq -cS . <<<"$cur")" ]] || return 0
-  cp -p "$f" "$(bak_path "$f")"; echo "$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "bar icon ${1/add/added to}${1/remove/removed from} $f"
+  cp -p "$f" "$(bak_path "$f")"; echo "$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "bar icon $([[ $1 == add ]] && echo "added to" || echo "removed from") $f"
 }
 
 # Keep the log small.
