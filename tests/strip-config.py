@@ -283,6 +283,17 @@ class StripConfig(unittest.TestCase):
         self.assertFalse((self.fake / 'shell').exists())
         self.assertFalse((self.fake / 'calls').exists())
 
+    def test_delayed_agent_does_not_take_focus_after_lock_starts(self):
+        self.conf.write_text('A | class.a | agent-a | |\nonly = A\n')
+        self.program('agent-a', 'echo true > "$FAKE/locked"\n')
+        self.command('show', 'A')
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and (self.state / 'launch.class.a').exists():
+            time.sleep(0.1)
+        self.assertTrue((self.fake / 'locked').exists())
+        calls = (self.fake / 'calls').read_text()
+        self.assertNotIn("focus({ window = 'address:0xa1' })", calls)
+
     def test_installer_skips_restart_and_first_run_popup_over_screensaver(self):
         (self.cfg / 'hypr/hyprland.lua').write_text('-- user config\n')
         (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')

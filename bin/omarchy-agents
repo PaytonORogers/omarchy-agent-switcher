@@ -723,6 +723,7 @@ await_window() { # background: when agent <idx> maps, focus + dim it if still th
       notify-send -a "Agent switcher" -u normal "$n didn't start" "No window with class $c after ${LAUNCH_TIMEOUT}s. See omarchy-agents doctor." 2>/dev/null
       timeout 2 omarchy-shell -q agentswitcher refresh >/dev/null 2>&1; exit 0; fi
     is_addr "$a" || exit 0
+    desktop_ready || exit 0
     [[ $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
     p=$(hyprctl cursorpos)
     l="pcall(function() hl.dispatch(hl.dsp.window.float({ window = 'address:$a', action = 'set' })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })) end) "
@@ -789,6 +790,7 @@ paste_into() { # paste_into <idx> <tui|gui>: background — wait for the window,
       a=$(client_addr "$c"); [[ -n $a ]] && break; sleep 0.33; done
     is_addr "$a" || { notify-send -a "Agent switcher" "Couldn't paste: ${names[$i]} has no window" 2>/dev/null; exit 0; }
     sleep 0.3
+    desktop_ready || exit 0
     hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end)" >/dev/null 2>&1; sleep 0.1
     if command -v wtype >/dev/null; then
       if [[ $kind == tui ]]; then wtype -M ctrl -M shift v -m shift -m ctrl; else wtype -M ctrl v -m ctrl; fi
@@ -924,7 +926,8 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
 # Strip updates go to the shell in the background so they never delay the slide.
 strip_show() { # after the strip maps, give the keyboard back to the agent window explicitly
   local p a; p=$(payload "$1"); a=$(addr_of "$1")
-  ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p"
+  ( desktop_ready || exit 0
+    timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p"
     is_addr "$a" || exit 0
     aw=$(hyprctl -j activewindow 2>/dev/null | jq -r '.workspace.name // "-"' 2>/dev/null)
     [[ $aw == "special:$WS" || $aw == - || $aw == null ]] || exit 0   # something else took focus (link opened): leave it
