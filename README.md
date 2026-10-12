@@ -51,7 +51,7 @@ It checks dependencies first and swaps files in atomically, so a failed install 
 Uninstall: `./uninstall.sh` reverts all of that and keeps your config. `./uninstall.sh --purge` removes the config too.
 
 ## Choosing agents
-Installed does not mean shown. The strip is the `only` list when that line is set, otherwise every agent line in the config. A first `omarchy plugin add` still enables one agent and leaves the rest commented out.
+Disabling an agent closes its matching open windows and hides its tab; enabling it makes the tab available again, and opening it starts a fresh window. Installed does not mean shown. The strip is the `only` list when that line is set, otherwise every agent line in the config. A first `omarchy plugin add` still enables one agent and leaves the rest commented out.
 
 ```sh
 omarchy-agents agents                 # what is on and what is installed but hidden

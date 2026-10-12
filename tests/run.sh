@@ -612,11 +612,11 @@ check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
 echo "== disabling an open agent"
 setup_world; monitors 1; clients "class.a:0xa1:243" "class.b:0xb1:243"; echo B > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
 $OA disable B >/dev/null
-check "disabled open agent moves to a normal workspace" "evals | grep -q \"workspace = '2', follow = false, window = 'address:0xb1'\""
-check "disabled window opacity restored before release" "evals | grep -q \"address:0xb1', prop = 'opacity', value = '1'\""
+check "disabled open agent closes" "evals | grep -q \"window.close({ window = 'address:0xb1' })\""
+check "other open agents stay running" "! evals | grep -q \"window.close({ window = 'address:0xa1' })\""
 check "membership change hides stale strip" "grep -q 'agentswitcher hide' $FAKE/shell"
 : > "$FAKE/calls"; clients "class.b:0xb1:243"; $OA enable B >/dev/null
-check "enable leaves enabled window for runtime to manage" "! evals | grep -q \"workspace = '2', follow = false, window = 'address:0xb1'\""
+check "enable never closes an agent" "! evals | grep -q \"window.close\""
 
 echo "== interactive setup selections"
 setup_registry() {

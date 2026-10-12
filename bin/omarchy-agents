@@ -1070,19 +1070,15 @@ upsert_only() {
   fi
   mv "$tmp" "$CONF"
 }
-release_hidden_agents() {
-  local i c n shown address workspace live
-  workspace=$(hyprctl -j monitors | jq -r 'first(.[] | select(.focused)).activeWorkspace.id // empty')
-  [[ $workspace =~ ^[0-9]+$ ]] || { log "cannot release hidden agents: no normal workspace"; return 1; }
+close_disabled_agents() { # only explicitly disabled classes, including a previously detached window
+  local c address live
+  (( $# )) || return 0
   live=$(hyprctl -j clients) || return 1
-  for i in "${!available_classes[@]}"; do
-    c=${available_classes[$i]}; shown=0
-    for n in "${classes[@]}"; do [[ ${n,,} == "${c,,}" ]] && shown=1; done
-    (( shown )) && continue
+  for c in "$@"; do
     while IFS= read -r address; do
       is_addr "$address" || continue
-      hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$address', prop = 'opacity', value = '1' })) end) pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$address', prop = 'opacity_inactive', value = '1' })) end) pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$address', prop = 'dim_around', value = '0' })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$workspace', follow = false, window = 'address:$address' })) end)" >/dev/null 2>&1 || return 1
-    done < <(jq -r --arg c "${c,,}" --arg ws "special:$WS" '.[] | select(.workspace.name == $ws and (((.class // "" | ascii_downcase) == $c) or ((.initialClass // "" | ascii_downcase) == $c))) | .address' <<<"$live")
+      hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.close({ window = 'address:$address' })) end)" >/dev/null 2>&1 || return 1
+    done < <(jq -r --arg c "${c,,}" '.[] | select(((.class // "" | ascii_downcase) == $c) or ((.initialClass // "" | ascii_downcase) == $c)) | .address' <<<"$live")
   done
 }
 apply_rules() {
@@ -1095,7 +1091,7 @@ apply_rules() {
   fi
   gen_rules
   hyprctl reload >/dev/null 2>&1 || true
-  release_hidden_agents
+  close_disabled_agents "$@"
 }
 agents_status() {
   load_conf
@@ -1196,8 +1192,15 @@ enable_agents() {
 disable_agents() {
   (( $# )) || die "usage: omarchy-agents disable NAME..."
   load_conf
-  local -a cur=() next=()
+  local -a cur=() next=() close_classes=()
   local w n drop seen arg i joined
+  for i in "${!available_names[@]}"; do
+    for arg in "$@"; do
+      if same_agent "$arg" "${available_names[$i]}" "${available_classes[$i]}"; then
+        close_classes+=("${available_classes[$i]}"); break
+      fi
+    done
+  done
   if [[ -v 'S[only]' ]]; then IFS=',' read -ra cur <<<"${S[only]}"; else cur=("${names[@]+"${names[@]}"}"); fi
   for w in "${cur[@]+"${cur[@]}"}"; do
     w=$(trim "$w"); [[ -n $w ]] || continue
@@ -1215,11 +1218,11 @@ disable_agents() {
       (( seen )) || next+=("$w")
     fi
   done
-  (( ${#next[@]} == ${#cur[@]} )) && die "no matching agent. Run: omarchy-agents agents"
+  (( ${#next[@]} == ${#cur[@]} && ${#close_classes[@]} == 0 )) && die "no matching agent. Run: omarchy-agents agents"
   joined="${next[0]:-}"
   if (( ${#next[@]} )); then for n in "${next[@]:1}"; do joined+=", $n"; done; else joined=""; fi
   upsert_only "$joined"
-  apply_rules
+  apply_rules "${close_classes[@]}"
   load_conf
   echo "showing: ${names[*]:-(none)}"
 }
