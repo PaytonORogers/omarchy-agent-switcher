@@ -98,10 +98,10 @@ load_conf() {
   # `only` is the strip, in tab order. A missing line shows every available agent.
   # An empty value shows nothing. Installed agents left off the list stay out.
   [[ -v 'S[only]' ]] || return 0
-  local -a nn=() nc=() nl=() nk=() ni=() np=() want=()
+  local -a nn=() nc=() nl=() nk=() ni=() np=() wanted=()
   local w i
-  IFS=',' read -ra want <<<"${S[only]}"
-  for w in "${want[@]+"${want[@]}"}"; do
+  IFS=',' read -ra wanted <<<"${S[only]}"
+  for w in "${wanted[@]+"${wanted[@]}"}"; do
     w=$(trim "$w"); [[ -n $w ]] || continue
     for i in "${!names[@]}"; do
       same_agent "$w" "${names[$i]}" "${classes[$i]}" || continue
@@ -274,11 +274,14 @@ setup() {
   else
     load_conf
     local -a pre=(); local shown n
-    for f in "${labels[@]}"; do
-      shown=0
-      for n in "${names[@]+"${names[@]}"}"; do [[ $n == "$f" ]] && shown=1; done
-      (( shown )) && pre+=("$f")
-    done
+    if [[ ! -f $CONF ]]; then pre=("${labels[@]}")
+    else
+      for f in "${labels[@]}"; do
+        shown=0
+        for n in "${names[@]+"${names[@]}"}"; do [[ $n == "$f" ]] && shown=1; done
+        (( shown )) && pre+=("$f")
+      done
+    fi
     echo "Detected agents (unchecked ones stay off the strip):"
     if have_gum; then
       local selected=""
@@ -943,10 +946,9 @@ bar_entry() { # add|remove our bar icon in shell.json: center section, directly 
 # Keep the log small.
 [[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
 
-lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 same_agent() { # same_agent <want> <name> <class>
   local w n c
-  w=$(lower "$1"); n=$(lower "$2"); c=$(lower "$3")
+  w=${1,,}; n=${2,,}; c=${3,,}
   [[ -n $w && ( $w == "$n" || $w == "$c" ) ]]
 }
 upsert_only() {
