@@ -32,17 +32,26 @@ Item {
   property real usageCrit: 0.9
   property real usageRefreshMin: 10
 
-  readonly property color fg: luminance(bg) > 0.179 ? "#111111" : "#FFFFFF"
-  readonly property color bg: Color.background
+  // Popup roles follow shell.toml overrides; typed properties convert role strings to colors.
+  readonly property color surfaceBackground: Color.popups ? Color.popups.background : Color.background
+  readonly property color themeText: Color.popups ? Color.popups.text : Color.foreground
+  // Keep the strip opaque for readability, retaining the popup palette.
+  readonly property color bg: Qt.rgba(surfaceBackground.r, surfaceBackground.g, surfaceBackground.b, 1)
+  readonly property color fg: readableText(bg, themeText)
 
   function luminance(c) {
     function linear(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
     return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
   }
+  function contrast(a, b) {
+    var x = luminance(a), y = luminance(b)
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+  }
   function readableText(background, preferred) {
-    var b = luminance(background), f = luminance(preferred)
-    if ((Math.max(b, f) + 0.05) / (Math.min(b, f) + 0.05) >= 4.5) return preferred
-    return b > 0.179 ? "#111111" : "#FFFFFF"
+    if (contrast(background, preferred) >= 4.5) return preferred
+    // The theme surface is often the right ink on a light accent pill.
+    if (contrast(background, bg) >= 4.5) return bg
+    return luminance(background) > 0.179 ? "#000000" : "#FFFFFF"
   }
 
   function open(payloadJson) {
@@ -311,7 +320,7 @@ Item {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
-                color: tab.sel ? root.readableText(root.accent, root.fg) : root.fg
+                color: tab.sel ? root.readableText(root.accent, root.themeText) : root.fg
                 font.family: Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
@@ -324,7 +333,7 @@ Item {
                 width: pctMetrics.width
                 horizontalAlignment: Text.AlignRight
                 text: Math.round(tab.usage * 100) + "%"
-                color: tab.sel ? root.readableText(root.accent, root.fg) : root.fg
+                color: tab.sel ? root.readableText(root.accent, root.themeText) : root.fg
                 font.family: Style.font.family; font.pixelSize: 12
                 TextMetrics { id: pctMetrics; font.family: Style.font.family; font.pixelSize: 12; text: "100%" }
               }
