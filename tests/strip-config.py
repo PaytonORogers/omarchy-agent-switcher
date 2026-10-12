@@ -271,6 +271,18 @@ class StripConfig(unittest.TestCase):
         self.command('configure')
         self.assertIn('"picker":true', (self.fake / 'shell').read_text())
 
+    def test_shell_lock_and_pending_screensaver_block_before_window_maps(self):
+        (self.fake / 'locked').write_text('true\n')
+        self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
+        self.command('configure'); self.command('show', 'A')
+        (self.fake / 'locked').write_text('false\n')
+        (self.fake / 'idle.json').write_text('{"screensaverStarted":true,"screensaverWindows":0}')
+        self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
+        self.command('configure'); self.command('show', 'A')
+        self.assertFalse((self.fake / 'launch').exists())
+        self.assertFalse((self.fake / 'shell').exists())
+        self.assertFalse((self.fake / 'calls').exists())
+
     def test_installer_skips_restart_and_first_run_popup_over_screensaver(self):
         (self.cfg / 'hypr/hyprland.lua').write_text('-- user config\n')
         (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')
