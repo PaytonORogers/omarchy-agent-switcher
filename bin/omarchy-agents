@@ -530,6 +530,18 @@ runtime_init() {
     toggle|show|next|prev|direct|shortcuts|send|send-files|refresh|refocus)
       if ! desktop_ready "$tmp.m" "$tmp.c"; then rm -f "$tmp".*; exit 0; fi ;;
   esac
+  local signin_mode=""
+  if [[ $(signin_pending_json) != null ]]; then
+    case ${cmd[0]} in
+      toggle) signin_mode=toggle ;;
+      show|next|prev|direct|shortcuts|send|send-files) signin_mode=show ;;
+      refresh|refocus) rm -f "$tmp".*; exit 0 ;;
+    esac
+    if [[ -n $signin_mode ]]; then
+      timeout 2 omarchy-shell -q agentswitcher resumeSignin "$signin_mode" >/dev/null 2>&1 || true
+      rm -f "$tmp".*; force_close; exit 0
+    fi
+  fi
   load_conf; N=${#names[@]}
   if (( ! N )); then
     rm -f "$tmp".*
@@ -1080,13 +1092,20 @@ status_of() { # effective state; a "working" with no news for status_stale_min m
   if [[ $st == working ]] && (( $(date +%s) - ${t:-0} > $(num "${S[status_stale_min]}" 10 | cut -d. -f1) * 60 )); then echo idle; return; fi
   case $st in working|approval|error|done) echo "$st" ;; *) echo idle ;; esac
 }
-status_seen() { [[ $(status_of "${classes[$1]}") == 'done' ]] && status_set "${classes[$1]}" idle; return 0; }
+status_seen() { [[ $(status_of "${classes[$1]}") == "done" ]] && status_set "${classes[$1]}" idle; return 0; }
+signin_pending_json() {
+  local data pid
+  data=$(jq -c '.state as $s | select((.name|type)=="string" and (.name|length)>0 and (["confirmation_needed","signed_out","opening","awaiting_login","failed"]|index($s))!=null)' "$STATE/signin-ui.json" 2>/dev/null) || data=""
+  pid=$(jq -r '.pid // empty' <<<"$data" 2>/dev/null)
+  if [[ $pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then jq -c '{name,state}' <<<"$data"
+  else echo null; fi
+}
 status_json() {
   local i out="" st top=idle
   for i in "${!names[@]}"; do st=$(status_of "${classes[$i]}")
     (( $(status_prio "$st") > $(status_prio "$top") )) && top=$st
     out+="${out:+,}$(jq -cn --arg n "${names[$i]}" --arg c "${classes[$i]}" --arg s "$st" '{name:$n,class:$c,state:$s}')"; done
-  echo "{\"top\":\"$top\",\"agents\":[${out}]}"
+  echo "{\"top\":\"$top\",\"agents\":[${out}],\"signIn\":$(signin_pending_json)}"
 }
 class_for() { local i; for i in "${!names[@]}"; do [[ $(provider_of "$i") == "$1" ]] && { echo "${classes[$i]}"; return 0; }; done; return 1; }
 hook_event() { # hook <claude|codex|grok>: called by the agent's hook system with the event JSON on stdin; prints nothing

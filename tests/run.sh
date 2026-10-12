@@ -703,6 +703,7 @@ check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \
 check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
 check "strip configuration regression suite" "python3 \"$ROOT/tests/strip-config.py\""
+check "sign-in controller hides and resumes" "\"$TEST_NODE\" \"$ROOT/tests/signin-ui.js\""
 
 check "theme roles and usage-fill contrast" "\"$TEST_NODE\" \"$ROOT/tests/theme-contrast.js\""
 

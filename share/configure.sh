@@ -74,6 +74,7 @@ move_agent() {
 }
 configure_show() {
   desktop_ready || return 0
+  if [[ $(signin_pending_json) != null && $(timeout 2 omarchy-shell -q agentswitcher resumeSignin show 2>/dev/null) == handled ]]; then return 0; fi
   load_conf
   local payload mon top
   mon=$(hyprctl -j monitors | jq -c 'first(.[]|select(.focused))')

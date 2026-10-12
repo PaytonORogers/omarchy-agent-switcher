@@ -42,6 +42,7 @@ Item {
   property var actionQueue: []
   property var loginResult: ({state: "checking"})
   property bool loginVisible: false
+  property bool loginPresented: false
   property bool loginCancelled: false
   property string loginAgent: ""
   property string pendingLoginAction: ""
@@ -124,8 +125,8 @@ Item {
   onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
   function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
   function endArrange() { if (!arranging) return; arranging = false; actionQueue = actionQueue.filter(function(a) { return a[0] !== "arrange-keys" }); mutate(["arrange-keys", "off"]) }
-  function dismissControls() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
-  function close() { if (loginProc.running && !loginVisible) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
+  function dismissControls() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
+  function close() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
   function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
   function controls(mode, name) { if (desktopBlocked) return; focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
   function arrange(name) {
@@ -152,15 +153,39 @@ Item {
     if (desktopBlocked) return
     if (loginProc.running) return
     loginCancelled = false
+    loginPresented = false; loginVisible = false
     pendingLoginAction = action || ""
     loginAgent = name; loginResult = {state: "checking", name: name}; controlError = "Checking sign-in…"
     loginProc.command = [Quickshell.env("HOME") + "/.local/share/omarchy-agent-switcher/configure-signin", bin, name]
     loginProc.running = true
   }
   function loginAction(action) {
-    if (action === "cancel") { loginCancelled = true; loginVisible = false; if (loginProc.running) loginProc.signal(15); return }
+    if (action === "hide") { loginVisible = false; return }
+    if (action === "cancel") { loginCancelled = true; loginVisible = false; loginPresented = false; if (loginProc.running) loginProc.signal(15); return }
     if (!loginProc.running) { beginLogin(loginAgent, action); return }
+    if (action === "open") loginVisible = false
+    else if (action === "check" || action === "confirm") loginResult = {name:loginAgent,state:"checking",message:"Checking sign-in…"}
     loginProc.write(action + "\n")
+  }
+  function resumeSignin(mode) {
+    if (desktopBlocked || loginCancelled || !loginPresented || !loginProc.running) return "none"
+    endArrange(); opened = false; controlMode = ""; sheet = false
+    loginVisible = mode === "toggle" ? !loginVisible : true
+    return "handled"
+  }
+  function handleLoginResult(r) {
+    if (loginCancelled) return
+    loginResult = r
+    if (r.state === "added") {
+      loginVisible = false; loginPresented = false; controlError = ""; loadCatalog(); run(["configure"])
+    } else if (r.state !== "verified") {
+      loginPresented = true
+      // Opening hides the controller immediately. Preserve that choice while
+      // the agent maps, including an explicit resume during a slow launch.
+      if (r.state !== "opening" && r.state !== "awaiting_login") loginVisible = true
+      if (opened) { close(); run(["hide"]) }
+      if (pendingLoginAction !== "") { var a = pendingLoginAction; pendingLoginAction = ""; loginAction(a) }
+    }
   }
   Process {
     id: catalogProc
@@ -187,22 +212,16 @@ Item {
     stdinEnabled: true
     stdout: SplitParser { onRead: (data) => {
       try {
-        if (root.loginCancelled) return
-        var r = JSON.parse(data)
-        root.loginResult = r
-        if (r.state === "added") { root.loginVisible = false; root.controlError = ""; root.loadCatalog(); root.run(["configure"]); }
-        else if (r.state !== "verified") {
-          root.loginVisible = true
-          if (root.opened) root.run(["hide"])
-          if (root.pendingLoginAction !== "") { var a=root.pendingLoginAction; root.pendingLoginAction=""; loginProc.write(a + "\n") }
-        }
+        root.handleLoginResult(JSON.parse(data))
       } catch (e) { root.controlError = "Cannot read sign-in status." }
     } }
-    onExited: (code) => { if (code !== 0 && root.loginVisible) root.loginResult = {name:root.loginAgent,state:"failed",message:"Sign-in stopped. Retry or cancel."} }
+    onExited: (code) => { if (code !== 0 && root.loginPresented && !root.loginCancelled) { root.loginVisible = true; root.loginResult = {name:root.loginAgent,state:"failed",message:"Sign-in stopped. Retry or cancel."} } }
   }
   SigninWindow {
     visible: root.loginVisible && !root.desktopBlocked
     result: root.loginResult
+    returnShortcut: root.prettyKey(root.toggleKey)
+    canHide: loginProc.running
     background: root.bg; foreground: root.fg; accent: root.accent
     onActionRequested: (action) => root.loginAction(action)
   }
@@ -276,7 +295,8 @@ Item {
     function status(): string { if (root.opened) root.run(["show", root.active]); return "ok" }   // an agent status changed
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
-    function configure(mode: string, name: string): string { if (mode === "arrange") root.arrange(name); else if (["add", "settings", "tab"].indexOf(mode) >= 0) root.controls(mode, name); else return "unknown mode"; return "ok" }
+    function configure(mode: string, name: string): string { if (mode === "arrange") root.arrange(name); else if (mode === "signin") root.beginLogin(name); else if (["add", "settings", "tab"].indexOf(mode) >= 0) root.controls(mode, name); else return "unknown mode"; return "ok" }
+    function resumeSignin(mode: string): string { return root.resumeSignin(mode) }
     function arrangeAction(action: string): string { root.arrangeAction(action); return "ok" }
     function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
   }

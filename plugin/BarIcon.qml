@@ -13,11 +13,12 @@ BarWidget {
   readonly property string oaBin: Quickshell.env("HOME") + "/.local/bin/omarchy-agents"
   property string topState: "idle"
   property var agents: []
+  property var pendingSignin: null
 
   function stateColor(s) { return s === "approval" ? "#E3A23B" : s === "error" ? "#E5534B" : s === "done" ? "#57AB5A" : "#9B7BD4" }
   function label(s) { return s === "approval" ? "waiting for approval" : s === "error" ? "error" : s === "done" ? "done, waiting on you" : s === "working" ? "working" : "idle" }
   function parse(text) {
-    try { var j = JSON.parse(String(text || "{}")); topState = j.top || "idle"; agents = j.agents || [] } catch (e) {}
+    try { var j = JSON.parse(String(text || "{}")); topState = j.top || "idle"; agents = j.agents || []; pendingSignin = j.signIn || null } catch (e) {}
   }
 
   implicitWidth: btn.implicitWidth
@@ -34,14 +35,14 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "\uee0d"
-    tooltipText: "Agents" + root.agents.map(function (a) { return "\n" + a.name + ": " + root.label(a.state) }).join("")
+    tooltipText: (root.pendingSignin ? "Finish adding " + root.pendingSignin.name + "\nClick to return to sign-in" : "Agents") + root.agents.map(function (a) { return "\n" + a.name + ": " + root.label(a.state) }).join("")
     onPressed: { toggler.running = true }
   }
   Rectangle {
     id: dot
-    visible: root.topState !== "idle"
+    visible: root.pendingSignin !== null || root.topState !== "idle"
     width: 6; height: 6; radius: 3
-    color: root.stateColor(root.topState)
+    color: root.pendingSignin !== null ? Commons.Color.accent : root.stateColor(root.topState)
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.horizontalCenterOffset: 7
     anchors.verticalCenter: parent.verticalCenter

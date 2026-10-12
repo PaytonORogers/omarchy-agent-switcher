@@ -16,6 +16,7 @@ class Session:
         self.state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy-agent-switcher'
         self.state.mkdir(parents=True, exist_ok=True)
         self.marker = self.state / 'setup-login'
+        self.progress = self.state / 'signin-ui.json'
         self.owner = os.getppid()
         self.prepared = False
         self.result = {}
@@ -36,6 +37,9 @@ class Session:
             raise
 
     def emit(self, state, message='', **fields):
+        temporary = self.progress.with_name(f'{self.progress.name}.{os.getpid()}.tmp')
+        temporary.write_text(json.dumps({'pid': os.getpid(), 'name': self.name, 'state': state}))
+        temporary.replace(self.progress)
         print(json.dumps(dict(self.result, state=state, message=message, **fields)), flush=True)
 
     def check(self):
@@ -90,6 +94,11 @@ class Session:
                 pass
         if self.lock:
             self.lock.close()
+        try:
+            if json.loads(self.progress.read_text()).get('pid') == os.getpid():
+                self.progress.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
 
     def run(self):
         try:

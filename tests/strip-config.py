@@ -303,6 +303,32 @@ class StripConfig(unittest.TestCase):
         (self.fake / 'lock.json').write_text('{"locked":true,"requested":false,"pending":false,"sessionLocked":false,"secure":true}')
         self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
 
+    def test_pending_signin_status_and_cleanup_without_config_changes(self):
+        old = self.conf.read_text()
+        proc = self.service()
+        self.state_is(proc, 'confirmation_needed')
+        data = json.loads(self.command('status', '--json').stdout)
+        self.assertEqual(data['signIn'], {'name': 'A', 'state': 'confirmation_needed'})
+        self.send(proc, 'cancel'); proc.communicate(timeout=10)
+        self.assertFalse((self.state / 'signin-ui.json').exists())
+        self.assertIsNone(json.loads(self.command('status', '--json').stdout)['signIn'])
+        self.assertEqual(self.conf.read_text(), old)
+
+    def test_toggle_returns_to_pending_signin_with_an_empty_strip(self):
+        self.conf.write_text('only = \n')
+        proc = self.service(); self.state_is(proc, 'confirmation_needed')
+        self.command('toggle')
+        shell = (self.fake / 'shell').read_text()
+        self.assertIn('agentswitcher resumeSignin toggle', shell)
+        self.assertNotIn('shell summon', shell)
+        self.assertFalse((self.fake / 'launch').exists())
+        self.send(proc, 'cancel'); proc.communicate(timeout=10)
+        self.assertEqual(self.conf.read_text(), 'only = \n')
+
+    def test_stale_signin_progress_is_not_offered_in_bar(self):
+        (self.state / 'signin-ui.json').write_text('{"pid":999999999,"name":"A","state":"awaiting_login"}')
+        self.assertIsNone(json.loads(self.command('status', '--json').stdout)['signIn'])
+
     def test_installer_skips_restart_and_first_run_popup_over_screensaver(self):
         (self.cfg / 'hypr/hyprland.lua').write_text('-- user config\n')
         (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')
