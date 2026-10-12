@@ -336,6 +336,12 @@ sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a"}' > "$FAKE/a
 check "no sound when that tab is open and focused" "[[ -z \$(snd) ]]"
 sreset; $OA status-set B idle; $OA status-set B done; check "other agent's sound still plays while A is in view" "snd | grep -q complete"
 unset OA_SOUND_PLAYER
+echo "== click_through doesn't use modal dim_around"
+setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"; $OA show A >/dev/null 2>&1
+check "click_through: agent gets dim_around 0 (no full-monitor hit box)" "evals | grep -q \"prop = 'dim_around', value = '0'\" && ! evals | grep -q \"dim_around', value = '1'\""
+$OA rules >/dev/null 2>&1; check "rules dim via dim_special and restore it" "grep -q 'dim_special = math.max' $R && grep -q 'dim_special = s.ds' $R && grep -q 'agent_switcher.dim = true' $R"
+echo 'click_through = false' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/calls"; $OA hide >/dev/null 2>&1; $OA show A >/dev/null 2>&1
+check "click_through = false keeps modal dim_around" "evals | grep -q \"dim_around', value = '1'\""
 
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
