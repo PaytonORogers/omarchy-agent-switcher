@@ -532,14 +532,14 @@ runtime_init() {
     | ($f | lw) as $wh
     | ([$m[0][] | . as $x | ($x|lw) as $w2 | [$x.x, $x.x + ($w2[0]/$x.scale|floor)]]) as $b
     | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end) \([$b[][0]]|min) \([$b[][1]]|max) \(($f.reserved // [0,0,0,0]) | map(floor) | join(" "))",
-      ($cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase)))) // null | if . then "\($k) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
+      ($cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase)))) // null | if . then "\($k) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0]) \(.floating != false)" else empty end)')
   rm -f "$tmp".*
   read -r MON MX MY MW MH VIS DX0 DX1 RL RT RR RB <<<"$(head -1 <<<"$out")"
   is_int "${MW:-x}" && is_int "${MH:-x}" && is_int "${MX:-x}" && is_int "${MY:-x}" || die "could not read monitor geometry from hyprctl"
   is_int "${DX0:-x}" || DX0=$MX; is_int "${DX1:-x}" || DX1=$((MX+MW))
-  declare -gA ADDR=() WSN=() WW=() WH=() WX=() TW=() TH=()
-  local c a w x y z; while read -r c a w x y z; do
-    [[ -n $c ]] && is_addr "$a" || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z
+  declare -gA ADDR=() WSN=() WW=() WH=() WX=() FLOAT=() TW=() TH=()
+  local c a w x y z floating; while read -r c a w x y z floating; do
+    [[ -n $c ]] && is_addr "$a" || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z; FLOAT[$c]=$floating
   done <<<"$(tail -n +2 <<<"$out")"
   for v in RL RT RR RB; do is_int "${!v:-x}" || printf -v "$v" 0; done
   geometry
@@ -605,6 +605,7 @@ capture_user_size() {
   visible || return 0
   local i c; i=$(idx_of "$last"); [[ -n $i ]] || return 0; c=${classes[$i]}
   [[ -n ${ADDR[$c]:-} && ${WSN[$c]} == "special:$WS" ]] || return 0
+  [[ ${FLOAT[$c]:-true} == true ]] || return 0   # a tiled sign-in window is not a panel resize
   [[ -f $STATE/launch.$c ]] && return 0
   local w=${WW[$c]:-0} h=${WH[$c]:-0}
   (( w >= 320 && h >= 200 )) || return 0
@@ -693,7 +694,8 @@ await_window() { # background: when agent <idx> maps, focus + dim it if still th
     is_addr "$a" || exit 0
     [[ $(cat "$STATE/last" 2>/dev/null) == "$n" ]] || exit 0
     p=$(hyprctl cursorpos)
-    l="pcall(function() hl.dispatch(hl.dsp.window.resize({ window = 'address:$a', x = $gw, y = $gh })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ window = 'address:$a', x = $gx, y = $gy })) end) "
+    l="pcall(function() hl.dispatch(hl.dsp.window.float({ window = 'address:$a', action = 'set' })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })) end) "
+    l+="pcall(function() hl.dispatch(hl.dsp.window.resize({ window = 'address:$a', x = $gw, y = $gh })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ window = 'address:$a', x = $gx, y = $gy })) end) "
     l+="pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) "
     [[ $p =~ ^-?[0-9]+,\ -?[0-9]+$ ]] && l+="pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) end) "
     dim_modal && l+="pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) end) "
@@ -703,8 +705,14 @@ ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in ba
   local i=$1 c=${classes[$1]} a
   a=${ADDR[$c]:-}
   [[ -z $a ]] && { launch "$i"; return 2; }
+  # Sign-in uses a tiled normal window. Static map-time rules cannot float it
+  # when it is later reused in the panel; set floating before moving/resizing.
+  local was_tiled=0
+  if [[ ${FLOAT[$c]:-true} != true ]]; then
+    q "hl.dsp.window.float({ window = 'address:$a', action = 'set' })"; FLOAT[$c]=true; was_tiled=1
+  fi
   [[ ${WSN[$c]} != "special:$WS" ]] && { q "hl.dsp.window.move({ workspace = 'special:$WS', follow = false, window = 'address:$a' })"; WSN[$c]=special:$WS; }
-  if (( ${WW[$c]:-0} != TW[$c] || ${WH[$c]:-0} != TH[$c] )); then q "hl.dsp.window.resize({ window = 'address:$a', x = ${TW[$c]}, y = ${TH[$c]} })"; WW[$c]=${TW[$c]}; WH[$c]=${TH[$c]}; fi
+  if (( was_tiled || ${WW[$c]:-0} != TW[$c] || ${WH[$c]:-0} != TH[$c] )); then q "hl.dsp.window.resize({ window = 'address:$a', x = ${TW[$c]}, y = ${TH[$c]} })"; WW[$c]=${TW[$c]}; WH[$c]=${TH[$c]}; fi
   return 0
 }
 # dim_around makes Hyprland treat the WHOLE monitor as the window's hit box (modal), so every click

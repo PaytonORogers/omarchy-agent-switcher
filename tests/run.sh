@@ -109,6 +109,21 @@ $OA show B
 check "outgoing parks left of the whole desktop" "evals | grep -q \"address:0xa1', x = -833\""
 check "incoming came from right of the whole desktop (3240)" "! evals | grep -q \"address:0xb1', prop = 'no_anim'\""
 
+echo "== reuse a tiled sign-in window"
+setup_world; clients "class.a:0xa1:0"
+jq 'map(.floating = false | .workspace.name = "2" | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "sign-in window floats before moving to the panel and resizing" "evals | grep -q \"window.float({ window = 'address:0xa1', action = 'set' }).*workspace = 'special:agents'.*window.resize({ window = 'address:0xa1', x = 793\""
+check "sign-in window is reused rather than launched again" "! grep -q 'launch A:' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+setup_world; clients "class.a:0xa1:243"
+jq 'map(.floating = false)' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "tiled window matching target size is still resized after floating" "evals | grep -q \"action = 'set'.*window.resize({ window = 'address:0xa1'\""
+setup_world; monitors 1; clients "class.a:0xa1:0"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+jq 'map(.floating = false | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA hide >/dev/null
+check "tiled sign-in size is not saved as a user panel resize" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
+
 echo "== unknown / missing agents"
 setup_world; clients "class.a:0xa1:243"; : > "$FAKE/calls"
 $OA show Nope 2>"$T/err"; rc=$?; : "$rc"
