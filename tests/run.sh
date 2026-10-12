@@ -312,6 +312,11 @@ $OA bar-entry add >/dev/null; $OA bar-entry add >/dev/null
 check "bar icon placed directly left of the clock, once" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"io.github.paytonorogers.agent-switcher\",\"omarchy.clock\",\"omarchy.weather\"]' && \$(jq -r .bar.centerAnchor $XDG_CONFIG_HOME/omarchy/shell.json) == omarchy.clock ]]"
 $OA bar-entry remove >/dev/null; check "bar icon removed" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"omarchy.clock\",\"omarchy.weather\"]' ]]"
 check "manifest declares the bar widget" "jq -e '(.kinds|index(\"bar-widget\")) and .entryPoints.barWidget==\"plugin/BarIcon.qml\"' $ROOT/manifest.json >/dev/null && [[ -f $ROOT/plugin/BarIcon.qml ]]"
+echo "== passive refresh keeps auto-hide"
+check "strip grace period starts only on open or tab switch" "grep -q 'if (!opened || (p.active !== undefined && p.active !== active)) lastShow = Date.now()' $ROOT/plugin/Switcher.qml && [[ \$(grep -c 'lastShow = Date.now()' $ROOT/plugin/Switcher.qml) == 1 ]]"
+setup_world; monitors 1; clients "class.a:0xa1:243"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/acted"
+$OA show A >/dev/null 2>&1; check "re-showing the active tab (refresh) doesn't mark our own action" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/acted ]]"
+
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
 if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do

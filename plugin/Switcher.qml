@@ -41,6 +41,9 @@ Item {
       // Updates are sent in the background; drop any that arrive out of order.
       if (p.seq !== undefined) { if (p.seq < lastSeq) return; lastSeq = p.seq }
       if (p.agents) agents = p.agents
+      // Only a real open or tab switch starts the "our own action" grace period; passive
+      // refreshes (usage, status) must not swallow the focus change from a newly opened window.
+      if (!opened || (p.active !== undefined && p.active !== active)) lastShow = Date.now()
       if (p.active !== undefined) active = p.active
       if (p.accent) accent = p.accent
       if (p.bin) bin = p.bin
@@ -59,7 +62,6 @@ Item {
       if (p.usageCrit !== undefined) usageCrit = p.usageCrit
       if (p.usageRefreshMin) usageRefreshMin = p.usageRefreshMin
       opened = true
-      lastShow = Date.now()
     } catch (e) {}
   }
   // Closing the sheet on purpose (key, click, Esc) hands the keyboard back to the agent:
