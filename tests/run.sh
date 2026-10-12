@@ -239,6 +239,13 @@ check "sheet lists cycle keys" "[[ \$P == *'Previous agent'* && \$P == *'Next ag
 check "sheet lists live resize binds (not mouse)" "[[ \$P == *'Super+minus'*'Shrink window width'* && \$P != *'with mouse'* ]]"
 check "sheet lists reset-size + click actions" "[[ \$P == *'reset-size'* && \$P == *'Right-click tab'* ]]"
 check "missing agent's key not in sheet" "[[ \$P != *'Super+Alt+M'* ]]"
+monitors 1; echo "window=600x300 strip=400 sheet=true" > "$FAKE/metrics"; : > "$FAKE/shell"; : > "$FAKE/calls"
+$OA shortcuts; sleep 0.5
+check "shortcuts again closes an open sheet" "grep -qx 'agentswitcher shortcuts' $FAKE/shell && ! grep -q summon $FAKE/shell && ! evals | grep -q toggle_special"
+echo "window=600x60 strip=400 sheet=false" > "$FAKE/metrics"; : > "$FAKE/shell"
+$OA shortcuts; sleep 0.5
+check "shortcuts with sheet closed reopens it" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":true' && ! grep -qx 'agentswitcher shortcuts' $FAKE/shell"
+rm -f "$FAKE/metrics"
 monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "normal updates close the sheet" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":false'"
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "show_hint=false hides the hint line (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"

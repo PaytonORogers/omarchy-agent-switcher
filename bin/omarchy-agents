@@ -716,7 +716,10 @@ case $cmd in
   send)   send_text "${@:2}" ;;
   send-files) send_files "${@:2}" ;;
   usage)  usage_refresh "${2:-}"; [[ ${2:-} == --print ]] && usage_json ;;
-  shortcuts) SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
+  shortcuts) # toggle: if the sheet is already up, close it (the panel stays)
+    if visible && [[ $(timeout 2 omarchy-shell agentswitcher metrics 2>/dev/null) == *"sheet=true"* ]]; then
+      timeout 2 omarchy-shell -q agentswitcher shortcuts >/dev/null 2>&1; exit 0; fi
+    SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
   geometry) i=$(idx_of "$last"); c=${classes[$i]}   # debug: computed layout for the focused monitor
           echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(( SY - MY + TH[$c] + 10 ))" ;;
   autohide) # called by the strip on focus/workspace events: close if focus left the agents

@@ -2,4 +2,5 @@
 [[ ${1:-} == -q ]] && shift
 printf '%s\n' "$*" >> "$FAKE/shell"
 [[ ${2:-} == ping ]] && echo ok
+[[ ${2:-} == metrics && -f $FAKE/metrics ]] && cat "$FAKE/metrics"
 exit 0
