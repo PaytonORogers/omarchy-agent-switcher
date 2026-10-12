@@ -57,7 +57,7 @@ Disabling an agent closes its matching open windows and hides its tab; enabling 
 omarchy-agents agents                 # what is on and what is installed but hidden
 omarchy-agents disable Cursor Codex   # hide these; the rest stay, in the same order
 omarchy-agents enable "Claude Code"   # add one back
-omarchy-agents setup                  # checklist of everything detected (space toggles)
+omarchy-agents setup                  # checklist of everything detected (X toggles)
 ```
 
 `only = Grok Bot, Claude Code` in `agents.conf` is the same list, in tab order. `setup` rewrites the agent lines from what you check and clears `only`. `setup --yes` still takes every detected agent.
