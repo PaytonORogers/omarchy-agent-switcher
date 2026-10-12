@@ -18,6 +18,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 - **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
 - **Usage meter.** Each tab fills left to right with that agent's plan usage (accent → amber → red), percent on hover.
+- **Status.** A dot on each tab, and a bar icon, shows working, a question waiting on you, an error, or a finished reply. A short sound can play for those, except while that agent's window is the one you are looking at.
 
 ## Install
 Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on 0.56.2) and the Omarchy shell, plus `jq`, `flock` (util-linux) and optionally `gum`.
@@ -25,7 +26,7 @@ Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on
 ```sh
 omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
 ```
-On first load the panel runs the bundled `install.sh --from-shell` once (it enables every detected agent; run `omarchy-agents setup` to pick and order them).
+On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to pick and order them.
 
 Or from a checkout (interactive agent picker):
 ```sh

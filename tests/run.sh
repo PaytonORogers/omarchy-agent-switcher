@@ -507,7 +507,7 @@ check "stuck lock is logged with its holder" "grep -q 'lock timeout' $XDG_STATE_
 kill $hold 2>/dev/null; wait $hold 2>/dev/null
 setup_world; : > "$FAKE/shell"; $OA rules >/dev/null 2>"$T/err"
 check "unset optional keys give no warnings" "! grep -q 'invalid' $T/err"
-check "click-through while open (special_fallthrough, restored on close)" "grep -q 'special_fallthrough = true' $R && grep -q 'agent_switcher.saved' $R"
+check "click-through while open (click-to-focus only, restored on close)" "grep -q 'special_fallthrough = true' $R && grep -q 'follow_mouse = 0' $R && grep -q 'float_switch_override_focus = 0' $R && grep -q 'float_switch_override_focus = s.fs' $R"
 echo "click_through = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA rules >/dev/null 2>&1
 check "click_through = false disables it" "grep -q 'agent_switcher.click_through = false' $R"
 

@@ -159,16 +159,20 @@ function agent_switcher.sheet_keys(on)
   pcall(hl.unbind, "Escape")
   if on then hl.bind("Escape", hl.dsp.exec_cmd(agent_switcher.sheet_esc), { description = "Close agent switcher shortcuts" }) end
 end
--- While open: clicks on visible windows outside the panel reach them (special_fallthrough;
--- our agents are floating), and focus follows clicks only (follow_mouse 2) so merely moving
--- the pointer off the panel doesn't close it. The user's values are restored on close.
+-- While open: clicks outside the floating agent reach the windows under it
+-- (special_fallthrough). Focus changes only on click. follow_mouse 2 is not enough:
+-- with float_switch_override_focus left at its default, Hyprland still keyboard-focuses
+-- when the pointer crosses from a floating window onto a tiled one, and autohide then
+-- closes the panel. The user's values are restored on close.
 function agent_switcher.on()
   for _, c in ipairs(cycle) do pcall(hl.unbind, c.key); hl.bind(c.key, hl.dsp.exec_cmd(c.cmd), { description = c.desc }) end
   if agent_switcher.click_through and not agent_switcher.saved then
     pcall(function()
-      local fm, sf = hl.get_config("input.follow_mouse"), hl.get_config("input.special_fallthrough")
-      agent_switcher.saved = { fm = fm, sf = sf }
-      hl.config({ input = { special_fallthrough = true, follow_mouse = (fm == 1) and 2 or fm } })
+      local fm = hl.get_config("input.follow_mouse")
+      local sf = hl.get_config("input.special_fallthrough")
+      local fs = hl.get_config("input.float_switch_override_focus")
+      agent_switcher.saved = { fm = fm, sf = sf, fs = fs }
+      hl.config({ input = { special_fallthrough = true, follow_mouse = 0, float_switch_override_focus = 0 } })
       if agent_switcher.dim then  -- dim the rest of the screen without dim_around's input grab
         local ds = hl.get_config("decoration.dim_special")
         agent_switcher.saved.ds = ds
@@ -184,7 +188,8 @@ function agent_switcher.off()
     if c.restore then hl.bind(c.key, c.restore[2](), { description = c.restore[1] }) end
   end
   local s = agent_switcher.saved
-  if s then agent_switcher.saved = nil; pcall(function() hl.config({ input = { special_fallthrough = s.sf, follow_mouse = s.fm } }) end)
+  if s then agent_switcher.saved = nil
+    pcall(function() hl.config({ input = { special_fallthrough = s.sf, follow_mouse = s.fm, float_switch_override_focus = s.fs } }) end)
     if s.ds ~= nil then pcall(function() hl.config({ decoration = { dim_special = s.ds } }) end) end end
 end
 LUA

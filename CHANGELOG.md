@@ -4,7 +4,7 @@
 ### Fixed (laptop testing)
 - After `send`, the switcher could stop responding (toggle/switch did nothing, strip stuck on screen): `wl-copy` daemonizes and inherited the state lock. It no longer does, and toggle/hide/autohide now force-close panel + strip if the lock is ever stuck.
 - Hovering a tab for its usage % no longer resizes the tab/strip (caused glitches at the strip edges); the % space is reserved.
-- Clicking a window outside the open panel now focuses it and closes the panel (`click_through`, on by default: special_fallthrough + click-to-focus only while open, restored on close).
+- Clicking a window outside the open panel now focuses it and closes the panel (`click_through`, on by default: special_fallthrough + click-to-focus only while open, restored on close). Moving the pointer off the agent does not; Hyprland's float-to-tile focus switch is disabled for that time too.
 - `omarchy plugin add` first load enables one agent (Grok Bot, else the first detected); the others are listed commented out in agents.conf and the notification says how to add more.
 - Installer: no false "install python-nautilus", "plugin not enabled" or empty-key warnings.
 ### Changed
@@ -14,6 +14,11 @@
 - `open_on = last|first|<agent>` chooses what the toggle opens (asked in the setup wizard; direct keys unaffected).
 - Send to agent: `send` (selection/clipboard, or `--text`), `send-files` (uri-list / image data / quoted paths); optional `send_key`; Nautilus "Send to agent" submenu (`install.sh --with-nautilus`) and an *Open With → Send to agent* desktop entry.
 - Usage meter on tabs (fill/percent/off, warn/crit thresholds, lazy cached refresh) using Omarchy's usage records plus collectors vendored from auxxed/omarchy-agents (MIT). Optional provider field in agents.conf.
+- Status dots on each tab and a bar icon: working, approval (amber, including decision questions), error, and done. Claude, Codex, and Grok Build report through their hooks; Grok Bot uses its reply notification. An idle ping does not clear an open question.
+- Optional sound on approval, error, and done (`sound = default | chime | off`). Silent while do-not-disturb is on, while that agent's window is focused and on screen, and more than once per 3 seconds.
+- The strip follows the Omarchy bar (`strip_edge = auto | top | bottom`). With the bar on top, the panel drops in from the top.
+- A window that is not a configured agent and opens on the agent workspace is moved to the normal workspace and the panel hides.
+- Cursor's window class matches ignoring case, a second Cursor is not started, and its tab uses the real icon.
 
 ## 1.1.0 — 2026-10
 ### Fixed
