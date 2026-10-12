@@ -249,6 +249,11 @@ echo '[]' > "$FAKE/clients.json"; : > "$FAKE/calls"; monitors 0
 $OA show Cursor >/dev/null 2>&1; sleep 0.3
 check "no window yet: launches via the registry command" "grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 
+echo "== passive refresh keeps auto-hide"
+check "strip grace period starts only on open or tab switch" "grep -q 'if (!opened || (p.active !== undefined && p.active !== active)) lastShow = Date.now()' $ROOT/plugin/Switcher.qml && [[ \$(grep -c 'lastShow = Date.now()' $ROOT/plugin/Switcher.qml) == 1 ]]"
+setup_world; monitors 1; clients "class.a:0xa1:243"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/acted"
+$OA show A >/dev/null 2>&1; check "re-showing the active tab (refresh) doesn't mark our own action" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/acted ]]"
+
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
 if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do
