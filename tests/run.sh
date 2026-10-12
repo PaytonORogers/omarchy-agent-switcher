@@ -216,6 +216,29 @@ echo "strip_edge = top" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 G=$($OA geometry); check "strip_edge = top overrides the bar" "[[ \$G == *edge=top* ]]"
 echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"; echo "strip_edge = bottom" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 G=$($OA geometry); check "strip_edge = bottom overrides a top bar" "[[ \$G == *edge=bottom* ]]"
+echo "== fake Cursor end to end (registry -> setup -> rules -> window match -> icon)"
+setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+D=$XDG_DATA_HOME/omarchy-agent-switcher; mkdir -p "$D"; cp "$ROOT/share/registry.conf" "$ROOT/share/agents.conf.default" "$D/"
+for b in agent-a agent-b agent-c; do rm -f "$T/agents/$b"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/cursor"; chmod +x "$T/agents/cursor"
+mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/icons/hicolor/48x48/apps"
+printf '[Desktop Entry]\nName=Cursor\nExec=cursor %%F\nIcon=co.anysphere.cursor\nStartupWMClass=Cursor\nType=Application\n' > "$XDG_DATA_HOME/applications/cursor.desktop"
+: > "$XDG_DATA_HOME/icons/hicolor/48x48/apps/co.anysphere.cursor.png"
+CF=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "setup detects the fake cursor binary from the registry" "grep -qE '^Cursor +\| Cursor +\| uwsm-app -- cursor' $CF"
+check "setup writes Cursor's real icon name" "grep -E '^Cursor ' $CF | grep -q 'co.anysphere.cursor'"
+$OA rules >/dev/null 2>&1
+RX=$(grep -o 'o.window("(?i)^([^"]*)\$"' $R | head -1 | sed 's/^o.window("//; s/"$//; s/\\\\\\\\/\\\\/g')
+check "generated window rule is case-insensitive and names Cursor" "[[ \$RX == '(?i)^('*Cursor*')\$' ]]"
+check "rule regex matches Wayland app_id 'cursor' and 'Cursor', not 'cursor-agent'" "python3 -c 'import re,sys; r=re.compile(sys.argv[1]); sys.exit(0 if r.match(\"cursor\") and r.match(\"Cursor\") and not r.match(\"cursor-agent\") else 1)' \"\$RX\""
+monitors 0; clients "cursor:0xc0:243"; : > "$FAKE/calls"; : > "$FAKE/shell"
+$OA show Cursor >/dev/null 2>&1; sleep 0.5
+check "app_id cursor window is the Cursor tab (moved + focused, not relaunched)" "evals | grep -q 'address:0xc0' && ! grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+check "Cursor tab icon resolves to the theme icon" "grep summon $FAKE/shell | tail -1 | grep -q 'image://icon/co.anysphere.cursor'"
+echo '[]' > "$FAKE/clients.json"; : > "$FAKE/calls"; monitors 0
+$OA show Cursor >/dev/null 2>&1; sleep 0.3
+check "no window yet: launches via the registry command" "grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
