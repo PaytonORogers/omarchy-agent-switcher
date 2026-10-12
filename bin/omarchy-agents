@@ -526,13 +526,13 @@ runtime_init() {
   fi
   local tmp=$STATE/snap.$$
   hyprctl -j monitors > "$tmp.m" & hyprctl -j clients > "$tmp.c" & hyprctl cursorpos > "$tmp.p" & wait
-  case ${cmd[0]} in
+  case $action in
     toggle|show|next|prev|direct|shortcuts|send|send-files|refresh|refocus)
       if ! desktop_ready "$tmp.m" "$tmp.c"; then rm -f "$tmp".*; exit 0; fi ;;
   esac
   local signin_mode=""
   if [[ $(signin_pending_json) != null ]]; then
-    case ${cmd[0]} in
+    case $action in
       toggle) signin_mode=toggle ;;
       show|next|prev|direct|shortcuts|send|send-files) signin_mode=show ;;
       refresh|refocus) rm -f "$tmp".*; exit 0 ;;
@@ -545,7 +545,7 @@ runtime_init() {
   load_conf; N=${#names[@]}
   if (( ! N )); then
     rm -f "$tmp".*
-    case ${cmd[0]} in
+    case $action in
       hide|autohide) force_close ;;
       refocus|refresh) : ;;
       toggle) if [[ $(timeout 2 omarchy-shell agentswitcher state 2>/dev/null) == open:* ]]; then force_close; else configure_show true; fi ;;
