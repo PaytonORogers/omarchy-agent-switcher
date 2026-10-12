@@ -140,8 +140,9 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchy-agent-switcher"
     WlrLayershell.layer: WlrLayer.Overlay
-    // Focus only when clicked, so the agent keeps the keyboard otherwise.
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    // Never take keyboard focus: an on-demand layer grabs it when it maps, which left
+    // the agent window unable to type after every open. Clicks still work.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
     Rectangle {
       id: sheetBox

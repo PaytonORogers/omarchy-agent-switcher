@@ -601,7 +601,10 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
     --args "${args[@]}"
 }
 # Strip updates go to the shell in the background so they never delay the slide.
-strip_show() { local p; p=$(payload "$1"); ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p" ) >/dev/null 2>&1 9>&- & }
+strip_show() { # after the strip maps, give the keyboard back to the agent window explicitly
+  local p a; p=$(payload "$1"); a=$(addr_of "$1")
+  ( timeout 2 omarchy-shell -q shell summon "$PLUGIN_ID" "$p"
+    is_addr "$a" && hyprctl eval "pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end)" ) >/dev/null 2>&1 9>&- & }
 strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
 starting() { notify-send -a "Agent switcher" -u low -t 2000 "Starting ${names[$1]}…" 2>/dev/null 9>&- & }
 

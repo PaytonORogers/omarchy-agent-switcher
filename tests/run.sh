@@ -168,6 +168,12 @@ sed -i "s#| grok\$#| $T/cursor.png#" "$XDG_CONFIG_HOME/omarchy-agent-switcher/ag
 check "absolute icon path is a file URL" "grep summon \$FAKE/shell | tail -1 | grep -q 'file://$T/cursor.png'"
 check "registry lists Cursor's real icon name" "grep -q 'uwsm-app -- cursor[[:space:]]*| co\\.anysphere\\.cursor' $ROOT/share/registry.conf"
 
+echo "== keyboard focus stays on the agent"
+setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"
+$OA show A >/dev/null 2>&1; sleep 0.6
+check "focus re-sent to the agent after the strip maps" "evals | tail -1 | grep -q \"focus({ window = 'address:0xa1' })\""
+check "strip layer never takes keyboard focus" "grep -q 'keyboardFocus: WlrKeyboardFocus.None' $ROOT/plugin/Switcher.qml && ! grep -q OnDemand $ROOT/plugin/Switcher.qml"
+
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
 echo "Q | class.q | env FOO=1 agent-a --flag 'two  spaces' |" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
