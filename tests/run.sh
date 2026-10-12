@@ -312,6 +312,11 @@ $OA bar-entry add >/dev/null; $OA bar-entry add >/dev/null
 check "bar icon placed directly left of the clock, once" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"io.github.paytonorogers.agent-switcher\",\"omarchy.clock\",\"omarchy.weather\"]' && \$(jq -r .bar.centerAnchor $XDG_CONFIG_HOME/omarchy/shell.json) == omarchy.clock ]]"
 $OA bar-entry remove >/dev/null; check "bar icon removed" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"omarchy.clock\",\"omarchy.weather\"]' ]]"
 check "manifest declares the bar widget" "jq -e '(.kinds|index(\"bar-widget\")) and .entryPoints.barWidget==\"plugin/BarIcon.qml\"' $ROOT/manifest.json >/dev/null && [[ -f $ROOT/plugin/BarIcon.qml ]]"
+echo "== QML syntax"
+QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
+if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do
+  check "$(basename "$f") has no QML syntax errors" "! \"$QL\" \"$f\" 2>&1 | grep -qiE 'syntax error|expected token|unexpected token'"; done
+else echo "  skip qmllint not installed"; fi
 
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
