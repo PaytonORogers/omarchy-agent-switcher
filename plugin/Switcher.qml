@@ -12,7 +12,10 @@ Item {
   property var shell: null
   readonly property var idleService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.idle") : null
   readonly property var lockService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.lock") : null
-  readonly property bool desktopBlocked: !!((idleService && (idleService.screensaverStartedThisCycle || idleService.screensaverWindowCount > 0)) || (lockService && lockService.locked))
+  // The aggregate lock flag can stay latched after unlock. Prefer the live
+  // request fields; CLI opens also check the actual session-lock state.
+  readonly property bool shellLockBlocked: lockService ? (typeof lockService.lockRequested === "boolean" && typeof lockService.pendingSessionLock === "boolean" ? lockService.lockRequested || lockService.pendingSessionLock || lockService.strandedLock === true : lockService.locked) : false
+  readonly property bool desktopBlocked: !!((idleService && (idleService.screensaverStartedThisCycle || idleService.screensaverWindowCount > 0)) || shellLockBlocked)
   onDesktopBlockedChanged: if (desktopBlocked) { close(); run(["hide"]) }
   property bool opened: false
   property var agents: []          // [{ name, icon, state: running|starting|stopped }]

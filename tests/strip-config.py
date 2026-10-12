@@ -294,6 +294,15 @@ class StripConfig(unittest.TestCase):
         calls = (self.fake / 'calls').read_text()
         self.assertNotIn("focus({ window = 'address:0xa1' })", calls)
 
+    def test_stale_lock_flag_after_unlock_does_not_block_desktop(self):
+        (self.fake / 'locked').write_text('true\n')
+        (self.fake / 'lock.json').write_text('{"locked":true,"requested":false,"pending":false,"sessionLocked":false,"secure":false}')
+        self.assertEqual(self.command('desktop-ready').returncode, 0)
+        self.command('configure')
+        self.assertIn('"picker":true', (self.fake / 'shell').read_text())
+        (self.fake / 'lock.json').write_text('{"locked":true,"requested":false,"pending":false,"sessionLocked":false,"secure":true}')
+        self.assertNotEqual(self.command('desktop-ready', check=False).returncode, 0)
+
     def test_installer_skips_restart_and_first_run_popup_over_screensaver(self):
         (self.cfg / 'hypr/hyprland.lua').write_text('-- user config\n')
         (self.fake / 'clients.json').write_text('[{"class":"org.omarchy.screensaver","address":"0xf1","workspace":{"name":"2"}}]')

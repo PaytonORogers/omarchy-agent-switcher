@@ -2,6 +2,12 @@
 [[ ${1:-} == -q ]] && shift
 # Status reads do not represent a UI mutation.
 if [[ ${1:-} == lock && ${2:-} == isLocked ]]; then cat "$FAKE/locked" 2>/dev/null || echo false; exit 0; fi
+if [[ ${1:-} == lock && ${2:-} == status ]]; then
+  if [[ -f $FAKE/lock.json ]]; then cat "$FAKE/lock.json"
+  elif [[ $(cat "$FAKE/locked" 2>/dev/null) == true ]]; then echo '{"requested":true,"pending":false,"sessionLocked":true,"secure":true}'
+  else echo '{"requested":false,"pending":false,"sessionLocked":false,"secure":false}'; fi
+  exit 0
+fi
 if [[ ${1:-} == idle && ${2:-} == status ]]; then cat "$FAKE/idle.json" 2>/dev/null || echo '{}'; exit 0; fi
 printf '%s\n' "$*" >> "$FAKE/shell"
 [[ ${2:-} == ping ]] && echo ok
