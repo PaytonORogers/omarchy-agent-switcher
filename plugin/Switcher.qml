@@ -14,6 +14,7 @@ Item {
   property string active: ""
   property string monitorName: ""
   property int stripTop: 0
+  property string edge: "bottom"           // top: strip under the bar, panel below; sheet opens downward
   property double lastSeq: 0
   property string bin: Quickshell.env("HOME") + "/.local/bin/omarchy-agents"
   property string toggleKey: "SUPER + A"
@@ -44,6 +45,7 @@ Item {
       if (p.bin) bin = p.bin
       if (p.monitor !== undefined) monitorName = p.monitor
       if (p.top) stripTop = p.top
+      if (p.edge) edge = p.edge
       if (p.toggleKey) toggleKey = p.toggleKey
       if (p.shortcutsKey !== undefined) shortcutsKey = p.shortcutsKey
       if (p.prevKey !== undefined) prevKey = p.prevKey
@@ -137,7 +139,7 @@ Item {
     screen: root.screenFor(root.monitorName)
     anchors { top: true }
     // The cheat sheet sits above the strip, so the window grows upward.
-    margins.top: Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
+    margins.top: root.edge === "top" ? root.stripTop : Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
     implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, hintLine.visible ? hintLine.implicitWidth + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
     implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + ((menu.visible || hintLine.visible) ? 20 : 0)
     color: "transparent"
@@ -151,7 +153,8 @@ Item {
     Rectangle {
       id: sheetBox
       visible: root.sheet
-      anchors.top: parent.top
+      anchors.top: root.edge === "top" ? (menu.visible ? menu.bottom : (hintLine.visible ? hintLine.bottom : strip.bottom)) : parent.top
+      anchors.topMargin: root.edge === "top" ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: grid.implicitWidth + 28
       height: grid.implicitHeight + sheetTitle.implicitHeight + 30
@@ -183,8 +186,8 @@ Item {
 
     Rectangle {
       id: strip
-      anchors.top: sheetBox.visible ? sheetBox.bottom : parent.top
-      anchors.topMargin: sheetBox.visible ? 8 : 0
+      anchors.top: (sheetBox.visible && root.edge !== "top") ? sheetBox.bottom : parent.top
+      anchors.topMargin: (sheetBox.visible && root.edge !== "top") ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: row.implicitWidth + 16
       height: 44

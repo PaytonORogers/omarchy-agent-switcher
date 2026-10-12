@@ -115,6 +115,7 @@ Usage comes from the same records as Omarchy's agent usage (`~/.local/state/omar
 Each tab shows the highest limit for its provider. The provider is guessed from the class/command (grok, grok-bot, claude, codex, hermes, …);
 set it explicitly as an optional 6th field: `Name | class | launch | key | icon | provider`.
 ```ini
+strip_edge = auto           # auto (same edge as the Omarchy bar; left/right -> bottom) | top | bottom
 usage_display = fill        # fill | percent | off
 usage_warn = 0.70           # amber from here
 usage_crit = 0.90           # red from here

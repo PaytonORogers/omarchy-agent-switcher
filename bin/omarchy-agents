@@ -43,7 +43,7 @@ find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 # ---------- config ----------------------------------------------------------
 declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
   [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 )
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto )
 names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); conf_warnings=()
 # Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
 program_of() {
@@ -85,6 +85,7 @@ load_conf() {
       S[$key]=$v
     fi
   done < "$CONF"
+  case ${S[strip_edge]} in auto|top|bottom) ;; *) conf_warnings+=("invalid strip_edge '${S[strip_edge]}' (auto | top | bottom)"); S[strip_edge]=auto ;; esac
   local kk; for kk in toggle_key prev_key next_key shortcuts_key send_key; do [[ -z ${S[$kk]} ]] || valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
   [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
   return 0
@@ -123,6 +124,8 @@ gen_rules() {
     for i in "${!names[@]}"; do [[ -n ${keys[$i]} ]] && echo "ab(\"$(lq "${keys[$i]}")\", \"$(lq "${names[$i]}") (agent switcher)\", \"$(lq "$SELF") direct ${classes[$i]}\")"; done
     local sh="" s; for s in ${S[start_hidden]//,/ }; do valid_class "$s" && sh+="${sh:+,}$s"; done
     [[ -n $sh ]] && echo "o.launch_on_start(\"$(lq "$SELF") direct $sh --start-hidden\")"
+    # Panel slides from the strip's edge (Omarchy's default specialWorkspace slidevert comes from the bottom).
+    [[ $(strip_edge) == top ]] && echo "pcall(hl.workspace_rule, { workspace = \"special:$WS\", animation = \"slidevert top\" })  -- strip_edge = top"
     if [[ ${S[override_slide_animation]} == true ]]; then
       ms=$(num "${S[slide_ms]}" 250)
       if awk -v m="$ms" 'BEGIN{exit !(m<=0)}'; then echo "hl.animation({ leaf = \"windowsMove\", enabled = false })  -- slide_ms = 0"
@@ -303,6 +306,17 @@ force_close() { # lock-free recovery: hide special:agents + strip, restore keys/
   hyprctl eval "$l" >/dev/null 2>&1; timeout 2 omarchy-shell -q agentswitcher hide >/dev/null 2>&1
   log "force-closed (lock busy)"
 }
+# Strip edge: auto follows the Omarchy bar (shell.json bar.position); left/right/missing -> bottom.
+strip_edge() {
+  local e=${S[strip_edge]:-auto}
+  if [[ $e == auto ]]; then
+    e=$(jq -r '.bar.position // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null)
+    [[ $e == top ]] || e=bottom
+  fi
+  echo "$e"
+}
+strip_top() { # strip y relative to the monitor: above the panel (top edge) or under it (bottom)
+  if [[ $EDGE == top ]]; then echo $(( OY - MY + 10 )); else echo $(( SY - MY + TH[${classes[$1]}] + 10 )); fi; }
 # ---------- geometry --------------------------------------------------------
 # Usable area = focused monitor in logical px (scale + rotation applied) minus
 # reserved space (bars). Default panel: ~62% wide on 16:9, narrower on ultrawide,
@@ -321,7 +335,8 @@ geometry() {
       W = spec(w, aw, aw*fw); if (W > mx) W = mx; if (W < mn) W = mn; if (W > aw - 24) W = aw - 24
       H = spec(h, ah, ah - g - sh); if (H > ah - g - sh) H = ah - g - sh; if (H < 200) H = 200
       printf "%d %d %d", W, H, g }')
-  SY=$(( OY + GAP ))
+  SY=$(( OY + GAP )); EDGE=$(strip_edge)
+  [[ $EDGE == top ]] && SY=$(( OY + 10 + 44 + 20 + 6 ))   # strip + hint line on top, panel below
   mkdir -p "$STATE/size"
 }
 size_file() { echo "$STATE/size/${classes[$1]}@$MON"; }
@@ -330,7 +345,8 @@ size_for() { # per-agent size: saved (from user resizing) for this monitor, else
   [[ -f $f ]] && read -r w h < "$f"
   is_int "$w" && is_int "$h" || { w=$PW; h=$PH; }
   (( w > AW - 24 )) && w=$(( AW - 24 )); (( w < 320 )) && w=320
-  (( h > AH - GAP - STRIPH )) && h=$(( AH - GAP - STRIPH )); (( h < 200 )) && h=200
+  (( h > AH - GAP - STRIPH )) && h=$(( AH - GAP - STRIPH ))
+  [[ $EDGE == top ]] && (( h > OY + AH - SY - 12 )) && h=$(( OY + AH - SY - 12 )); (( h < 200 )) && h=200
   TW[$c]=$w; TH[$c]=$h
 }
 slot_x() { echo $(( OX + (AW - TW[${classes[$1]}]) / 2 )); }
@@ -592,12 +608,12 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
   done
   local uj; uj=$(usage_json)
   jq -cn --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
-    --argjson top "$(( SY - MY + TH[${classes[$1]}] + 10 ))" --arg key "${S[toggle_key]}" --arg sk "${S[shortcuts_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
+    --argjson top "$(strip_top "$1")" --arg edge "$EDGE" --arg key "${S[toggle_key]}" --arg sk "${S[shortcuts_key]}" --arg pk "${S[prev_key]}" --arg nk "${S[next_key]}" \
     --argjson hint "$(show_hint && echo true || echo false)" --argjson seq "$(date +%s%3N)" \
     --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" --argjson u "$uj" \
     --arg ud "${S[usage_display]}" --argjson uw "$(num "${S[usage_warn]}" 0.7)" --argjson uc "$(num "${S[usage_crit]}" 0.9)" --argjson ur "$(num "${S[usage_refresh_min]}" 10)" \
     '[$ARGS.positional | range(0; length; 4) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2], usage: ($u[.[$j+3]].p // -1), usageLabel: ($u[.[$j+3]].t // "")}] as $a
-     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,toggleKey:$key,shortcutsKey:$sk,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet,usageDisplay:$ud,usageWarn:$uw,usageCrit:$uc,usageRefreshMin:$ur}' \
+     | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,edge:$edge,toggleKey:$key,shortcutsKey:$sk,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet,usageDisplay:$ud,usageWarn:$uw,usageCrit:$uc,usageRefreshMin:$ur}' \
     --args "${args[@]}"
 }
 # Strip updates go to the shell in the background so they never delay the slide.
@@ -739,7 +755,7 @@ case $cmd in
       timeout 2 omarchy-shell -q agentswitcher shortcuts >/dev/null 2>&1; exit 0; fi
     SHEET=true; if visible; then strip_show "$(idx_of "$last")"; else open_idx "$(idx_of "$last")"; fi ;;
   geometry) i=$(idx_of "$last"); c=${classes[$i]}   # debug: computed layout for the focused monitor
-          echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(( SY - MY + TH[$c] + 10 ))" ;;
+          echo "monitor=$MON area=${AW}x$AH+$OX+$OY panel=${TW[$c]}x${TH[$c]}+$(slot_x "$i")+$SY default=${PW}x$PH strip_top=$(strip_top "$i") edge=$EDGE" ;;
   autohide) # called by the strip on focus/workspace events: close if focus left the agents
           (( $(date +%s%3N) - $(cat "$STATE/acted" 2>/dev/null || echo 0) < 1000 )) && exit 0   # our own open/switch
           [[ -n $(find "$STATE" -maxdepth 1 -name 'launch.*' -newermt "-$LAUNCH_TIMEOUT seconds" 2>/dev/null) ]] && exit 0   # agent starting

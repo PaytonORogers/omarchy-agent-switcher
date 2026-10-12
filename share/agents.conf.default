@@ -18,6 +18,7 @@ click_through = true       # while open, clicking a window outside the panel foc
 prev_key = SUPER + ALT + LEFT    # cycle agents; bound ONLY while the panel is open
 next_key = SUPER + ALT + RIGHT
 # send_key = SUPER + CTRL + S    # paste selected text into the agent (default unbound)
+strip_edge = auto            # tab strip edge: auto (follows the Omarchy bar) | top | bottom
 usage_display = fill        # usage meter on tabs: fill | percent | off
 usage_warn = 0.70
 usage_crit = 0.90

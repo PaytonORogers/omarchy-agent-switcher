@@ -189,6 +189,23 @@ check "window on a regular workspace is left alone" "! grep -q . $FAKE/calls"
 check "unknown or bad address does nothing" "! grep -q . $FAKE/calls"
 check "plugin evicts on openwindow even when closed, no browser list" "grep -q 'run(\\[\"evict\"' $ROOT/plugin/Switcher.qml && ! grep -qiE 'chrom|firefox|zen' $ROOT/plugin/Switcher.qml"
 
+echo "== strip edge"
+setup_world; monitors 0; clients "class.a:0xa1:243"
+G=$($OA geometry); check "no shell.json -> bottom edge" "[[ \$G == *edge=bottom* ]]"
+mkdir -p "$XDG_CONFIG_HOME/omarchy"; echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"
+G=$($OA geometry); check "bar on top -> strip on top, panel below it" "[[ \$G == *edge=top* && \$G == *strip_top=10* ]] && [[ \$G =~ panel=[0-9]+x[0-9]+\+[0-9]+\+80 ]]"
+$OA rules >/dev/null 2>&1; R=$XDG_CONFIG_HOME/hypr/agent-switcher.lua
+check "top edge: panel slides down from the top" "grep -q 'animation = \"slidevert top\"' $R"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "payload carries edge top" "grep summon $FAKE/shell | tail -1 | grep -q '\"edge\":\"top\"'"
+echo '{"bar":{"position":"left"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"
+G=$($OA geometry); check "bar on the left -> bottom" "[[ \$G == *edge=bottom* ]]"
+$OA rules >/dev/null 2>&1; check "bottom edge: no slide override" "! grep -q 'slidevert top' $R"
+echo "strip_edge = top" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+G=$($OA geometry); check "strip_edge = top overrides the bar" "[[ \$G == *edge=top* ]]"
+echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"; echo "strip_edge = bottom" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+G=$($OA geometry); check "strip_edge = bottom overrides a top bar" "[[ \$G == *edge=bottom* ]]"
+
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
 echo "Q | class.q | env FOO=1 agent-a --flag 'two  spaces' |" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
