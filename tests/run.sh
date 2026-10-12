@@ -591,6 +591,8 @@ check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/n
 
 check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
+check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
+
 echo
 echo "passed: $PASS  failed: $FAILN"
 (( FAILN == 0 ))
