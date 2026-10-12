@@ -12,7 +12,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 |---|---|
 | ![Super+A opens and closes the drop-down panel](docs/media/agent-switcher-1-open-close.gif) | ![Switching agents slides sideways in tab order](docs/media/agent-switcher-2-switch.gif) |
 | **Usage meter** (hover a tab for the percent) | **Shortcuts sheet** (Super+/) |
-| ![Hovering a tab shows its usage percent](docs/media/agent-switcher-3-usage-hover.gif) | ![Super+/ opens the shortcuts sheet above the strip](docs/media/agent-switcher-4-shortcuts.gif) |
+| ![Hovering a tab shows its usage percent](docs/media/agent-switcher-3-usage-hover.gif) | ![Super+/ opens the shortcuts sheet on the far side of the strip (below a top strip)](docs/media/agent-switcher-4-shortcuts.gif) |
 | **Status dots** on each tab | **Status tooltip** (hover the bar icon) |
 | ![Status dots on tabs for working, question, error, done](docs/media/agent-switcher-5-status-dots.gif) | ![Hovering the bar icon shows a status tooltip](docs/media/agent-switcher-6-status-tooltip.gif) |
 
