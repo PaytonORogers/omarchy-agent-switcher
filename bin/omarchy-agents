@@ -98,10 +98,10 @@ load_conf() {
   # `only` is the strip, in tab order. A missing line shows every available agent.
   # An empty value shows nothing. Installed agents left off the list stay out.
   [[ -v 'S[only]' ]] || return 0
-  local -a nn=() nc=() nl=() nk=() ni=() np=() want=()
+  local -a nn=() nc=() nl=() nk=() ni=() np=() wanted=()
   local w i
-  IFS=',' read -ra want <<<"${S[only]}"
-  for w in "${want[@]+"${want[@]}"}"; do
+  IFS=',' read -ra wanted <<<"${S[only]}"
+  for w in "${wanted[@]+"${wanted[@]}"}"; do
     w=$(trim "$w"); [[ -n $w ]] || continue
     for i in "${!names[@]}"; do
       same_agent "$w" "${names[$i]}" "${classes[$i]}" || continue
