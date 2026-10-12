@@ -86,7 +86,7 @@ Rectangle {
         background: root.background; foreground: root.foreground; accent: root.accent
         onClicked: { var v = parseFloat(root.catalog.settings.opacity || "1"); var n = v < 0.85 ? "0.85 0.85" : v < 1 ? "1.0 1.0" : "0.75 0.75"; root.settingRequested("opacity", n) }
       }
-      Text { width: parent.width; wrapMode: Text.WordWrap; text: "Changes save immediately. Click an option to cycle it. Colours follow your Omarchy theme."; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 11 }
+      Text { width: parent.width; wrapMode: Text.WordWrap; text: "Changes save immediately. Click an option to cycle it. Colors follow your Omarchy theme."; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 11 }
     }
   }
 }

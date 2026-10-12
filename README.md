@@ -8,13 +8,13 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
-- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab or scroll over the strip. Add agent and Settings are always available. Right-click a tab to move, close, restart, or disable it; middle-click closes its window. Settings → Arrange tabs uses ←/→ to select, Super+Shift+←/→ to move, Enter to open, and Esc to finish. Tabs show whether an agent is running, starting (…) or not started yet.
+- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colors, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab or scroll over the strip. Add agent and Settings are always available. Right-click a tab to move, close, restart, or disable it; middle-click closes its window. Settings → Arrange tabs uses ←/→ to select, Super+Shift+←/→ to move, Enter to open, and Esc to finish. Tabs show whether an agent is running, starting (…) or not started yet.
 - **Directional switching.** Picking a tab to the right brings that agent in from the right while the old one leaves left, and the reverse for tabs on the left. The slide is ~250 ms and only applies to switches; your other window animations aren't touched.
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
 - **Remembers** the last agent you used. Your mouse cursor is never moved, and only the visible agent dims the desktop.
 - **Agent auto-detection.** Interactive install offers a GUI picker for the first agent; add others from the strip as needed. Agents that aren't installed are skipped.
-- **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
+- **Portable.** No hard-coded paths. Colors come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
 - **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
 - **Usage meter.** Each tab fills left to right with that agent's plan usage (accent → amber → red), percent on hover.
@@ -43,7 +43,7 @@ cd omarchy-agent-switcher
 - copies the plugin to `~/.config/omarchy/plugins/io.github.paytonorogers.agent-switcher`
 - writes `~/.config/hypr/agent-switcher.lua` (window rules and binds)
 - adds one `require("hypr.agent-switcher")` line to `hyprland.lua` (backed up to `hyprland.lua.bak-agent-switcher`)
-- adds a line to `~/.config/omarchy/hooks/theme-set` so border colours follow theme changes
+- adds a line to `~/.config/omarchy/hooks/theme-set` so border colors follow theme changes
 - enables the plugin and restarts the shell
 
 It checks dependencies first and swaps files in atomically, so a failed install leaves the old version working.
@@ -90,7 +90,7 @@ open_on = last                      # toggle opens: last | first | <agent name o
 prev_key   = SUPER + ALT + LEFT     # only bound while the panel is open
 next_key   = SUPER + ALT + RIGHT
 accent     =                        # empty = theme accent; e.g. #9B7BD4
-accent_inactive =                   # empty = theme selection colour
+accent_inactive =                   # empty = theme selection color
 width = auto                        # auto | 0.62 | 62% | 1200px  (auto: ~62% on 16:9, ~88% on small, ~45% ultrawide, ~94% portrait)
 height = auto                       # auto fills the screen below the bar, leaving room for the strip
 top = auto                          # gap above the panel: auto | fraction | px
