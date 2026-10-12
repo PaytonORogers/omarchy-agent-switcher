@@ -173,6 +173,21 @@ setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"
 $OA show A >/dev/null 2>&1; sleep 0.6
 check "focus re-sent to the agent after the strip maps" "evals | tail -1 | grep -q \"focus({ window = 'address:0xa1' })\""
 check "strip layer never takes keyboard focus" "grep -q 'keyboardFocus: WlrKeyboardFocus.None' $ROOT/plugin/Switcher.qml && ! grep -q OnDemand $ROOT/plugin/Switcher.qml"
+echo "== evict non-agent windows from the agents workspace"
+setup_world
+echo '[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1.5,"transform":0,"focused":true,"activeWorkspace":{"id":3,"name":"3"},"specialWorkspace":{"name":"special:agents"}}]' > "$FAKE/monitors.json"
+echo '[{"class":"class.a","address":"0xa1","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]},{"class":"chrome-x.com__-Default","initialClass":"chrome-x.com__-Default","address":"0xb2","workspace":{"name":"special:agents"},"size":[800,600],"at":[0,0]},{"class":"CLASS.A","address":"0xa9","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]},{"class":"kitty","address":"0xc3","workspace":{"name":"2"},"size":[800,600],"at":[0,0]}]' > "$FAKE/clients.json"
+: > "$FAKE/calls"; $OA evict 0xb2
+check "web app on special:agents moves to the active workspace" "evals | grep -q \"workspace = '3', follow = false, window = 'address:0xb2'\""
+check "evicted window is focused" "evals | grep -q \"focus({ window = 'address:0xb2' })\""
+check "panel hides via the normal hide path" "evals | grep -q toggle_special && evals | grep -q 'agent_switcher.off'"
+: > "$FAKE/calls"; $OA evict 0xa9
+check "agent class (any case) is not evicted" "! grep -q . $FAKE/calls"
+: > "$FAKE/calls"; $OA evict 0xc3
+check "window on a regular workspace is left alone" "! grep -q . $FAKE/calls"
+: > "$FAKE/calls"; $OA evict 0xdead; $OA evict notanaddr
+check "unknown or bad address does nothing" "! grep -q . $FAKE/calls"
+check "plugin evicts on openwindow even when closed, no browser list" "grep -q 'run(\\[\"evict\"' $ROOT/plugin/Switcher.qml && ! grep -qiE 'chrom|firefox|zen' $ROOT/plugin/Switcher.qml"
 
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world

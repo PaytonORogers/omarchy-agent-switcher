@@ -98,8 +98,12 @@ Item {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (!root.opened || !event || !event.name) return
+      if (!event || !event.name) return
       var n = String(event.name)
+      // openwindow data: ADDRESS,WORKSPACE,CLASS,TITLE. A non-agent window that lands on the
+      // agents workspace is moved out by the script (it checks the class against agents.conf).
+      if (n === "openwindow") { var d = String(event.data || "").split(","); if (d[1] === "special:agents") root.run(["evict", "0x" + d[0].replace(/^0x/, "")]) }
+      if (!root.opened) return
       if (n !== "activewindowv2" && n !== "activespecial" && n !== "workspace" && n !== "workspacev2" && n !== "focusedmon" && n !== "openwindow" && n !== "closewindow") return
       if (Date.now() - root.lastShow < 400) return
       root.sheet = false   // click-away / focus change closes the cheat sheet

@@ -715,6 +715,18 @@ case $cmd in
           fi
           visible && strip_show "$(idx_of "$last")" ;;
   hide)   hide_all ;;
+  evict)  # a window just mapped on special:agents: anything that isn't a configured agent
+          # (web app, browser, dialog from the launcher) goes to the regular workspace, panel hides
+          w=${2:-}; is_addr "$w" || exit 0
+          cj=$(hyprctl -j clients 2>/dev/null | jq -c --arg a "$w" 'first(.[] | select(.address == $a)) // empty' 2>/dev/null)
+          [[ -n $cj && $(jq -r '.workspace.name // ""' <<<"$cj") == "special:$WS" ]] || exit 0
+          wc=$(jq -r '.class // "" | ascii_downcase' <<<"$cj"); wi=$(jq -r '.initialClass // "" | ascii_downcase' <<<"$cj")
+          for c in "${classes[@]}"; do [[ ${c,,} == "$wc" || ${c,,} == "$wi" ]] && exit 0; done
+          tw=$(hyprctl -j monitors 2>/dev/null | jq -r --arg ws "special:$WS" 'first(.[] | select(.specialWorkspace.name == $ws) | .activeWorkspace.id // empty) // empty' 2>/dev/null)
+          [[ $tw =~ ^-?[0-9]+$ ]] || tw=e+0
+          log "evict $w ($wc) -> workspace $tw"
+          hide_all
+          hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$tw', follow = false, window = 'address:$w' })) end) pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$w' })) end)" >/dev/null 2>&1 ;;
   refocus) # the cheat sheet closed: hand the keyboard back from the strip to the active agent window
           i=$(idx_of "$last"); a=$([[ -n $i ]] && addr_of "$i")
           if visible && [[ -n $a ]]; then q "hl.dsp.focus({ window = 'address:$a' })"; flush; fi ;;
