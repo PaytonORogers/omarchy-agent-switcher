@@ -754,12 +754,15 @@ hook_event() { # hook <claude|codex|grok>: called by the agent's hook system wit
   # Grok Build also runs Claude's hooks; its payload is recognisable by the camelCase hookEventName key.
   [[ $(jq -r 'has("hookEventName")' <<<"$in" 2>/dev/null) == true ]] && tag=grok
   ev=$(jq -r '.hook_event_name // .hookEventName // empty' <<<"$in" 2>/dev/null)
+  local tool; tool=$(jq -r '.tool_name // .toolName // ""' <<<"$in" 2>/dev/null)
   case $ev in
-    UserPromptSubmit|user_prompt_submit|PreToolUse|pre_tool_use|PostToolUse|post_tool_use) st=working ;;
+    PreToolUse|pre_tool_use) case ${tool,,} in ask_user_question|askuserquestion|*__ask_user*) st=approval ;; *) st=working ;; esac ;;   # decision question waits on you
+    UserPromptSubmit|user_prompt_submit|PostToolUse|post_tool_use) st=working ;;
     PermissionRequest|permission_request) st=approval ;;
     Notification|notification)
       nt=$(jq -r '[.notification_type, .notificationType, .type, .message] | map(select(. != null)) | join(" ")' <<<"$in" 2>/dev/null); nt=${nt,,}
-      case $nt in *permission*|*approv*) st=approval ;; *) st=done ;; esac ;;
+      case $nt in *permission*|*approv*|*question*|*elicitation*) st=approval ;; *) st=done ;; esac
+      c=$(class_for "$tag") && [[ $st == done && $(status_of "$c") == approval ]] && return 0 ;;   # an idle ping must not hide an open question
     Stop|stop|StopCancelled|stop_cancelled) st=done ;;
     StopFailure|stop_failure|PostToolUseFailure) st=error ;;
     SessionStart|session_start|SessionEnd|session_end) st=idle ;;

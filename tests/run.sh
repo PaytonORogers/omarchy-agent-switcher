@@ -278,6 +278,14 @@ OUT=$(echo '{"hook_event_name":"Stop"}' | $OA hook claude); check "hook prints n
 echo '{"hook_event_name":"StopFailure","hookEventName":"stop_failure"}' | $OA hook claude
 check "grok payload via Claude's settings is tagged grok" "[[ \$(st class.b) == error && \$(st class.a) == done ]]"
 echo '{"hook_event_name":"PermissionRequest"}' | $OA hook codex; check "agent not configured: ignored" "! ls $SD | grep -q codex"
+echo '{"hook_event_name":"PreToolUse","hookEventName":"pre_tool_use","toolName":"ask_user_question"}' | $OA hook grok
+check "Grok Build ask_user_question -> approval" "[[ \$(st class.b) == approval ]]"
+echo '{"hook_event_name":"Notification","hookEventName":"notification","notificationType":"idle_prompt"}' | $OA hook grok
+check "idle ping keeps the open question amber" "[[ \$(st class.b) == approval ]]"
+echo '{"hook_event_name":"PostToolUse","hookEventName":"post_tool_use","toolName":"ask_user_question"}' | $OA hook grok
+check "answered question -> working" "[[ \$(st class.b) == working ]]"
+echo '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}' | $OA hook claude
+check "Claude AskUserQuestion -> approval" "[[ \$(st class.a) == approval ]]"
 echo 'not json' | $OA hook claude; check "garbage input is harmless" "[[ \$? == 0 ]]"
 printf 'signal time=1 sender=:1.5 -> destination=org.freedesktop.Notifications serial=9 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify\n   string "Signal"\n' | $OA notif-watch --stdin
 check "other app notification ignored" "[[ \$(st class.c) == idle ]]"
