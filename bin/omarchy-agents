@@ -513,7 +513,16 @@ runtime_init() {
   local tmp=$STATE/snap.$$
   hyprctl -j monitors > "$tmp.m" & hyprctl -j clients > "$tmp.c" & hyprctl cursorpos > "$tmp.p" & wait
   load_conf; N=${#names[@]}
-  (( N )) || { rm -f "$tmp".*; if [[ ${cmd[0]} == hide || $cmd == autohide ]]; then force_close; else configure_show true; fi; exit 0; }
+  if (( ! N )); then
+    rm -f "$tmp".*
+    case ${cmd[0]} in
+      hide|autohide) force_close ;;
+      refocus|refresh) : ;;
+      toggle) if [[ $(timeout 2 omarchy-shell agentswitcher state 2>/dev/null) == open:* ]]; then force_close; else configure_show true; fi ;;
+      *) configure_show true ;;
+    esac
+    exit 0
+  fi
   last=$(cat "$STATE/last" 2>/dev/null || true); [[ -n $(idx_of "$last") ]] || last=${names[0]}
   CURSOR=$(<"$tmp.p"); [[ $CURSOR =~ ^-?[0-9]+,\ -?[0-9]+$ ]] || CURSOR=""
   local cls; cls=$(printf '%s\n' "${classes[@]}" | jq -R . | jq -sc .)

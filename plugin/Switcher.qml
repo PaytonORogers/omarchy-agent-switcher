@@ -26,6 +26,7 @@ Item {
   property var catalog: ({agents: [], enabled: [], settings: {}})
   property bool catalogDirty: false
   property string controlMode: ""
+  property string buttonHint: ""
   property string controlError: ""
   property bool arranging: false
   property string editAgent: ""
@@ -300,7 +301,7 @@ Item {
     anchors { top: true }
     // The cheat sheet sits above the strip, so the window grows upward.
     margins.top: root.edge === "top" ? root.stripTop : Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0) - (configCard.visible ? configCard.height + 8 : 0))
-    implicitWidth: Math.max(strip.width, configCard.visible ? configCard.width + 16 : 0, hintLine.visible ? hintMetrics.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
+    implicitWidth: Math.max(strip.width + 2 * (sideControls.width + 10), configCard.visible ? configCard.width + 16 : 0, hintLine.visible ? hintMetrics.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
     implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + (configCard.visible ? configCard.height + 8 : (hintLine.visible ? 20 : 0))
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -373,6 +374,7 @@ Item {
         id: row
         anchors.centerIn: parent
         spacing: 4
+        Text { visible: !root.agents.length; text: "No agents"; color: root.fg; font.family: Commons.Style.font.family; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
         Repeater {
           model: root.agents
           Rectangle {
@@ -471,9 +473,35 @@ Item {
             }
           }
         }
-        ControlButton { text: "+ Add agent"; anchors.verticalCenter: parent.verticalCenter; background: root.bg; foreground: root.fg; accent: root.accent; onClicked: root.controls("add", "") }
-        ControlButton { text: root.arranging ? "Done" : "Settings"; anchors.verticalCenter: parent.verticalCenter; background: root.bg; foreground: root.fg; accent: root.accent; onClicked: { if (root.arranging) root.dismissControls(); else root.controls("settings", "") } }
 
+      }
+    }
+
+    // Reserve space without moving the centered tab pill when the actions appear.
+    Item {
+      x: strip.x - 5; y: strip.y - 5
+      width: strip.width + sideControls.width + 16; height: strip.height + 10
+      HoverHandler { id: stripHover; blocking: false }
+    }
+    Row {
+      id: sideControls
+      anchors.left: strip.right; anchors.leftMargin: 6
+      anchors.verticalCenter: strip.verticalCenter
+      spacing: 6
+      opacity: stripHover.hovered ? 1 : 0
+      enabled: stripHover.hovered
+      Behavior on opacity { NumberAnimation { duration: 100 } }
+      HoverAction {
+        glyph: "+"; label: "Add agent"
+        background: root.bg; foreground: root.fg; accent: root.accent
+        onHovered: (over) => root.buttonHint = over ? "Add agent" : ""
+        onClicked: root.controls("add", "")
+      }
+      HoverAction {
+        glyph: "\ue615"; label: "Settings"; ring: false // Same glyph as Omarchy's Setup/settings menu.
+        background: root.bg; foreground: root.fg; accent: root.accent
+        onHovered: (over) => root.buttonHint = over ? "Settings" : ""
+        onClicked: root.controls("settings", "")
       }
     }
 
@@ -493,7 +521,7 @@ Item {
       readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
-      text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.hoverInfo !== "" ? root.hoverInfo : defaultText)
+      text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.buttonHint !== "" ? root.buttonHint : root.hoverInfo !== "" ? root.hoverInfo : defaultText)
       color: root.fg
       font.family: Commons.Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
