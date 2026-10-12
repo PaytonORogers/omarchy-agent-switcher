@@ -32,7 +32,7 @@ Item {
   property real usageCrit: 0.9
   property real usageRefreshMin: 10
 
-  readonly property color fg: readableText(Color.background, Color.foreground)
+  readonly property color fg: luminance(bg) > 0.179 ? "#111111" : "#FFFFFF"
   readonly property color bg: Color.background
 
   function luminance(c) {
