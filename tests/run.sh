@@ -668,6 +668,8 @@ setup_world; echo 'only = cLaSs.C, a' >> "$XDG_CONFIG_HOME/omarchy-agent-switche
 check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \$'C\nA' ]]"
 check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
+check "interactive ordering regression suite" "python3 \"$ROOT/tests/order-agents.py\""
+
 echo
 echo "passed: $PASS  failed: $FAILN"
 (( FAILN == 0 ))

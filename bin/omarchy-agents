@@ -399,12 +399,22 @@ setup() {
       done
     fi
     (( ${#sel[@]} )) || die "nothing selected"
-    ordered=("${sel[@]}")
+    # Start with the existing tab order, then append newly selected agents.
+    ordered=()
+    for n in "${names[@]}"; do
+      for a in "${sel[@]}"; do [[ $n == "$a" ]] && ordered+=("$a"); done
+    done
+    for a in "${sel[@]}"; do
+      local already_ordered=0
+      for n in "${ordered[@]}"; do [[ $n == "$a" ]] && already_ordered=1; done
+      (( already_ordered )) || ordered+=("$a")
+    done
     if (( ${#sel[@]} > 1 )); then
-      echo "Tab order: enter every number in the order you want (e.g. 2 1 3). Enter keeps this order."
-      for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
-      if have_gum; then o=$(gum input --placeholder "Tab order: 2 1 3 (Enter keeps current order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o || return 1; fi
-      if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
+      local order_helper=$DATA/order-agents order_result
+      [[ -x $order_helper ]] || order_helper=$(dirname "$(readlink -f "$0")")/../share/order-agents
+      [[ -x $order_helper ]] || die "ordering helper missing; run install.sh"
+      order_result=$("$order_helper" "${ordered[@]}") || return 1
+      mapfile -t ordered <<<"$order_result"
     fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi

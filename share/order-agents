@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Interactive ordering helper. Menu goes to the tty; confirmed names go to stdout.
+set -u
+(( $# )) || exit 1
+items=("$@"); index=0
+{ exec 7<>/dev/tty; } 2>/dev/null || { [[ -t 0 ]] || exit 1; exec 7<&0; }
+restore() { printf '\033[0m\033[?25h\033[?1049l' >&7; }
+trap restore EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+printf '\033[?1049h\033[?25l' >&7
+while true; do
+  rows=$(tput lines 2>/dev/null || echo 24); [[ $rows =~ ^[0-9]+$ ]] || rows=24
+  count=$((rows-5)); (( count < 1 )) && count=1
+  first=$((index/count*count)); last=$((first+count)); (( last > ${#items[@]} )) && last=${#items[@]}
+  printf '\033[H\033[2JOrder agent tabs\nUp/Down: highlight   Alt+Up/Down: move   Enter: save   Esc: cancel\n\n' >&7
+  for ((i=first;i<last;i++)); do
+    if (( i == index )); then printf '\033[7m > %s \033[0m\n' "${items[$i]}" >&7
+    else printf '   %s\n' "${items[$i]}" >&7; fi
+  done
+  printf '\nTab %s of %s (K/J also move up/down)\n' "$((index+1))" "${#items[@]}" >&7
+  key=""; IFS= read -rsn1 key <&7 || exit 1
+  if [[ $key == $'\e' ]]; then
+    seq=""
+    while IFS= read -rsn1 -t 0.08 part <&7; do
+      seq+=$part
+      [[ $part == [A-Za-z~] || ${#seq} -ge 12 ]] && break
+    done
+    [[ -n $seq ]] || exit 1
+    case $seq in '[A') key=up ;; '[B') key=down ;; '[1;3A'|'[1;9A') key=move-up ;; '[1;3B'|'[1;9B') key=move-down ;; *) continue ;; esac
+  fi
+  case $key in
+    '') printf '%s\n' "${items[@]}"; exit 0 ;;
+    q|Q) exit 1 ;;
+    up|k) (( index > 0 )) && index=$((index-1)) ;;
+    down|j) (( index+1 < ${#items[@]} )) && index=$((index+1)) ;;
+    move-up|K)
+      if (( index > 0 )); then previous=$((index-1)); value=${items[$previous]}; items[$previous]=${items[$index]}; items[$index]=$value; index=$previous; fi ;;
+    move-down|J)
+      if (( index+1 < ${#items[@]} )); then next=$((index+1)); value=${items[$next]}; items[$next]=${items[$index]}; items[$index]=$value; index=$next; fi ;;
+  esac
+done
