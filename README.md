@@ -13,7 +13,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
 - **Remembers** the last agent you used. Your mouse cursor is never moved, and only the visible agent dims the desktop.
-- **Agent auto-detection.** Install finds the agents you have and lets you choose them. Agents that aren't installed are skipped.
+- **Agent auto-detection.** Install finds the agents you have and lets you pick and order them. Agents that aren't installed are skipped.
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
 - **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
@@ -26,13 +26,13 @@ Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on
 ```sh
 omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
 ```
-On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to choose them.
+On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to pick and order them.
 
 Or from a checkout (interactive agent picker):
 ```sh
 git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
 cd omarchy-agent-switcher
-./install.sh          # interactive: choose detected agents (uses gum if present)
+./install.sh          # interactive: pick + order detected agents (uses gum if present)
 ./install.sh --yes    # non-interactive: enable every detected agent
 ./install.sh --no-restart   # skip the shell restart (strip loads next time the shell restarts)
 ./install.sh --with-nautilus  # optional: "Send to agent" in the Nautilus right-click menu (needs python-nautilus)
@@ -51,7 +51,7 @@ It checks dependencies first and swaps files in atomically, so a failed install 
 Uninstall: `./uninstall.sh` reverts all of that and keeps your config. `./uninstall.sh --purge` removes the config too.
 
 ## Choosing agents
-Interactive setup opens only requested sign-in windows outside the panel before adding selected tabs. For agents without an automated check, choose `y` if already ready or `l` to open sign-in. During sign-in, close the app normally or use `c` to close its window and check/confirm readiness. Codex and Claude Code use their native login-status commands; other agents require confirmation that they are ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
+Interactive setup opens only requested sign-in windows outside the panel before adding selected tabs. For agents without an automated check, choose `y` if already ready or `l` to open sign-in. During sign-in, close the app normally or use `c` to close its window and check/confirm readiness. Codex and Claude Code use their native login-status commands, and Grok Bot uses a fresh app-only service check. Unavailable checks use explicit confirmation that the agent is ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
 
 `setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
 
