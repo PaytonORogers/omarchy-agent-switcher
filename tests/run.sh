@@ -332,9 +332,18 @@ sreset; $OA status-set C idle; sed -i 's/^sound = chime/sound = off/' "$XDG_CONF
 sed -i '/^sound = /d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 sreset; $OA status-set C idle; mkdir -p "$XDG_STATE_HOME/omarchy"; echo '{"version":3,"dnd":true}' > "$XDG_STATE_HOME/omarchy/notifications.json"
 $OA status-set C error; check "do-not-disturb is respected" "[[ -z \$(snd) ]]"; rm -f "$XDG_STATE_HOME/omarchy/notifications.json"
-sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a"}' > "$FAKE/activewindow.json"; $OA status-set A done
+sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A done
 check "no sound when that tab is open and focused" "[[ -z \$(snd) ]]"
 sreset; $OA status-set B idle; $OA status-set B done; check "other agent's sound still plays while A is in view" "snd | grep -q complete"
+sreset; $OA status-set A idle; monitors 0; echo '{"class":"Class.A","workspace":{"name":"3"}}' > "$FAKE/activewindow.json"; $OA status-set A done
+check "focused on a normal workspace (class case-insensitive) is silent" "[[ -z \$(snd) ]]"
+sreset; $OA status-set A idle; echo '{"class":"class.a","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA status-set A done
+check "agent focused but panel hidden still plays" "snd | grep -q complete"
+sreset; $OA status-set A idle; monitors 1; printf 'method call time=1 sender=:1.9 -> destination=org.freedesktop.Notifications serial=7 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify\n   string "Grok Bot"\n' > "$T/notif"
+sed -i 's/^A | class.a/A | class.a/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; echo 'GB | grok-bot | agent-a | | | grok-bot' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+echo '{"class":"grok-bot","workspace":{"name":"special:agents"}}' > "$FAKE/activewindow.json"; $OA notif-watch --stdin < "$T/notif" >/dev/null 2>&1
+check "Grok Bot reply notification while Grok Bot is focused: status done, no sound" "[[ \$(st grok-bot) == done && -z \$(snd) ]]"
+check "default player is pw-play with the theme file" "grep -q 'cmd=(pw-play \"\$f\")   # fastest start' $ROOT/bin/omarchy-agents"
 unset OA_SOUND_PLAYER
 echo "== click_through doesn't use modal dim_around"
 setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"; $OA show A >/dev/null 2>&1

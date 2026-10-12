@@ -743,9 +743,12 @@ dnd_on() { # Omarchy shell's do-not-disturb (persisted by its notifications serv
   command -v makoctl >/dev/null 2>&1 && makoctl mode 2>/dev/null | grep -qx 'do-not-disturb' && return 0
   return 1
 }
-agent_in_view() { # the panel is open and this agent's window has focus: you're already looking at it
-  [[ $(hyprctl -j monitors 2>/dev/null | jq -r 'any(.[]; .specialWorkspace.name == "special:agents")') == true ]] || return 1
-  [[ $(hyprctl -j activewindow 2>/dev/null | jq -r '.class // ""') == "$1" ]]
+agent_in_view() { # the real active window is this agent and is on screen (panel open, or on a normal workspace)
+  local aw ws; aw=$(hyprctl -j activewindow 2>/dev/null) || return 1
+  [[ $(jq -r '.class // "" | ascii_downcase' <<<"$aw" 2>/dev/null) == "${1,,}" ]] || return 1
+  ws=$(jq -r '.workspace.name // ""' <<<"$aw" 2>/dev/null)
+  [[ $ws != special:* ]] && return 0
+  [[ $(hyprctl -j monitors 2>/dev/null | jq -r --arg w "$ws" 'any(.[]; .specialWorkspace.name == $w)') == true ]]
 }
 sound_play() { # sound_play <class> <state>: decides and plays (in the background); every decision is logged
   local c=$1 st=$2 mode=${S[sound]:-default} now last f id
@@ -763,13 +766,13 @@ sound_play() { # sound_play <class> <state>: decides and plays (in the backgroun
   else
     [[ $st == done ]] && id=complete || id=message-new-instant
     f=/usr/share/sounds/freedesktop/stereo/$id.oga
-    if command -v canberra-gtk-play >/dev/null; then cmd=(canberra-gtk-play -i "$id" -d omarchy-agent-switcher)
-    elif command -v pw-play >/dev/null && [[ -f $f ]]; then cmd=(pw-play "$f")
-    elif command -v paplay >/dev/null && [[ -f $f ]]; then cmd=(paplay "$f"); fi
+    if command -v pw-play >/dev/null && [[ -f $f ]]; then cmd=(pw-play "$f")   # fastest start
+    elif command -v paplay >/dev/null && [[ -f $f ]]; then cmd=(paplay "$f")
+    elif command -v canberra-gtk-play >/dev/null; then cmd=(canberra-gtk-play -i "$id" -d omarchy-agent-switcher); fi
   fi
   [[ -n ${OA_SOUND_PLAYER:-} ]] && cmd=("$OA_SOUND_PLAYER" "${cmd[@]}")   # tests: record instead of play
   (( ${#cmd[@]} )) || { log "sound: no player for $mode $st"; return 0; }
-  log "sound: play $c $st: ${cmd[*]}"
+  log "sound: play $c $st at $(date +%T.%3N): ${cmd[*]}"
   ( timeout 5 "${cmd[@]}" >/dev/null 2>&1 & ) 9>&- 2>/dev/null
   return 0
 }
