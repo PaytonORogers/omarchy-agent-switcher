@@ -674,6 +674,8 @@ check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.
 
 check "interactive ordering regression suite" "python3 \"$ROOT/tests/order-agents.py\""
 
+check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
+
 echo
 echo "passed: $PASS  failed: $FAILN"
 (( FAILN == 0 ))

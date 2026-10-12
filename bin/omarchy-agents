@@ -274,6 +274,9 @@ have_gum() { [[ -z ${OMARCHY_AGENTS_NO_GUM:-} ]] && command -v gum >/dev/null; }
 setup_auth_status() { # 0 signed in, 1 signed out, 2 unavailable/unsupported
   local id=$1 prog rc
   case $id in
+    grok-bot) prog=$DATA/collectors/collect-grok-bot
+      [[ -x $prog ]] || return 2
+      timeout 15 "$prog" --check-login >/dev/null 2>&1; rc=$? ;;
     codex) prog=$(find_prog codex) || return 2
       timeout 10 "$prog" login status >/dev/null 2>&1; rc=$? ;;
     claude) prog=$(find_prog claude) || return 2
@@ -343,14 +346,14 @@ setup_login_gate() {
   for f in "${chosen[@]}"; do
     IFS='|' read -r id n _ <<<"$f"; id=$(trim "$id"); n=$(trim "$n")
     setup_auth_status "$id"; status=$?
-    if (( status == 0 )); then verified+=("$f"); echo "$n: native login check passed; no window needed."; continue; fi
+    if (( status == 0 )); then verified+=("$f"); echo "$n: login check passed; no window needed."; continue; fi
     if (( status == 2 )); then
-      echo "$n: setup cannot automatically check this agent's login."
+      echo "$n: could not verify this agent's login automatically."
       while true; do
-        read -r -p "$n: y = already signed in/ready, l = open for sign-in, s = skip, q = cancel: " reply || return 1
+        read -r -p "$n: Enter/l = open window to check sign-in, y = already ready (no window), s = skip, q = cancel: " reply || return 1
         case ${reply,,} in
-          y|yes) verified+=("$f"); break ;;
-          l|login) break ;;
+          y|yes) verified+=("$f"); echo "$n: confirmed ready; no window will open."; break ;;
+          ''|l|login) break ;;
           s|skip) break ;;
           q|quit) echo "Setup cancelled; config unchanged."; return 1 ;;
           *) echo "Choose y, l, s, or q." ;;
