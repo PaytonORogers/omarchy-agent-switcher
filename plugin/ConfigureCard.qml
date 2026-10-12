@@ -1,5 +1,5 @@
 import QtQuick
-import qs.Commons
+import qs.Commons as Commons
 
 Rectangle {
   id: root
@@ -7,9 +7,9 @@ Rectangle {
   property string agent: ""
   property var catalog: ({agents: [], enabled: [], settings: {}})
   property string error: ""
-  property color background: Color.background
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color background: Commons.Color.background
+  property color foreground: Commons.Color.foreground
+  property color accent: Commons.Color.accent
   signal addRequested(string name)
   signal commandRequested(string command, string argument)
   signal settingRequested(string key, string value)
@@ -29,10 +29,10 @@ Rectangle {
     x: 14; y: 14; width: parent.width - 28; spacing: 8
     Row {
       width: parent.width
-      Text { id: title; width: parent.width - 65; text: root.mode === "add" ? "Add an installed agent" : root.mode === "tab" ? root.agent : "Agent settings"; color: root.foreground; font.family: Style.font.family; font.pixelSize: 14; font.bold: true; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+      Text { id: title; width: parent.width - 65; text: root.mode === "add" ? "Add an installed agent" : root.mode === "tab" ? root.agent : "Agent settings"; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 14; font.bold: true; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
       ControlButton { text: "Done"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.dismissed() }
     }
-    Text { visible: root.error !== ""; width: parent.width; wrapMode: Text.WordWrap; text: root.error; color: root.foreground; font.family: Style.font.family; font.pixelSize: 12 }
+    Text { visible: root.error !== ""; width: parent.width; wrapMode: Text.WordWrap; text: root.error; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 12 }
     Flickable {
       visible: root.mode === "add"
       width: parent.width; implicitHeight: Math.min(360, agentRows.implicitHeight)
@@ -51,7 +51,7 @@ Rectangle {
           onClicked: root.addRequested(modelData.name)
         }
       }
-      Text { visible: !(root.catalog.agents || []).length; width: parent.width; wrapMode: Text.WordWrap; text: "No installed agents found. Install an agent, then reopen Add agent."; color: root.foreground; font.family: Style.font.family; font.pixelSize: 12 }
+      Text { visible: !(root.catalog.agents || []).length; width: parent.width; wrapMode: Text.WordWrap; text: "No installed agents found. Install an agent, then reopen Add agent."; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 12 }
     }
       }
     Column {
@@ -85,7 +85,7 @@ Rectangle {
         background: root.background; foreground: root.foreground; accent: root.accent
         onClicked: { var v = parseFloat(root.catalog.settings.opacity || "1"); var n = v < 0.85 ? "0.85 0.85" : v < 1 ? "1.0 1.0" : "0.75 0.75"; root.settingRequested("opacity", n) }
       }
-      Text { width: parent.width; wrapMode: Text.WordWrap; text: "Changes save immediately. Click an option to cycle it. Colours follow your Omarchy theme."; color: root.foreground; font.family: Style.font.family; font.pixelSize: 11 }
+      Text { width: parent.width; wrapMode: Text.WordWrap; text: "Changes save immediately. Click an option to cycle it. Colours follow your Omarchy theme."; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 11 }
     }
   }
 }

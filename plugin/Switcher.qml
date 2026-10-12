@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
-import qs.Commons
+import qs.Commons as Commons
 
 // Tab strip shown under the omarchy-agents drop-down. All state comes from the
 // omarchy-agents script via `omarchy-shell shell summon <id> <payload>`.
@@ -22,7 +22,7 @@ Item {
   property string prevKey: "SUPER + ALT + LEFT"
   property string nextKey: "SUPER + ALT + RIGHT"
   property bool hint: true
-  property color accent: Color.accent      // overridden by `accent =` in agents.conf
+  property color accent: Commons.Color.accent      // overridden by `accent =` in agents.conf
   property var catalog: ({agents: [], enabled: [], settings: {}})
   property bool catalogDirty: false
   property string controlMode: ""
@@ -45,8 +45,8 @@ Item {
   property real usageRefreshMin: 10
 
   // Popup roles follow shell.toml overrides; typed properties convert role strings to colors.
-  readonly property color surfaceBackground: Color.popups ? Color.popups.background : Color.background
-  readonly property color themeText: Color.popups ? Color.popups.text : Color.foreground
+  readonly property color surfaceBackground: Commons.Color.popups ? Commons.Color.popups.background : Commons.Color.background
+  readonly property color themeText: Commons.Color.popups ? Commons.Color.popups.text : Commons.Color.foreground
   // Keep the strip opaque for readability, retaining the popup palette.
   readonly property color bg: Qt.rgba(surfaceBackground.r, surfaceBackground.g, surfaceBackground.b, 1)
   readonly property color fg: readableText(bg, themeText)
@@ -320,7 +320,7 @@ Item {
       Accessible.role: Accessible.Dialog
       Accessible.name: "Agent switcher shortcuts"
       MouseArea { anchors.fill: parent; onClicked: root.hideSheet() }
-      Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
+      Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Commons.Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
       Grid {
         id: grid
         x: 14; anchors.top: sheetTitle.bottom; anchors.topMargin: 8
@@ -332,7 +332,7 @@ Item {
             readonly property var e: root.shortcuts[Math.floor(index / 2)]
             text: index % 2 === 0 ? e.keys : e.action
             color: index % 2 === 0 ? root.fg : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.7)
-            font.family: Style.font.family; font.pixelSize: 11
+            font.family: Commons.Style.font.family; font.pixelSize: 11
             font.weight: index % 2 === 0 ? Font.DemiBold : Font.Normal
           }
         }
@@ -433,7 +433,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
                 color: tab.ink
-                font.family: Style.font.family
+                font.family: Commons.Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
               }
@@ -446,8 +446,8 @@ Item {
                 horizontalAlignment: Text.AlignRight
                 text: Math.round(tab.usage * 100) + "%"
                 color: tab.ink
-                font.family: Style.font.family; font.pixelSize: 12
-                TextMetrics { id: pctMetrics; font.family: Style.font.family; font.pixelSize: 12; text: "100%" }
+                font.family: Commons.Style.font.family; font.pixelSize: 12
+                TextMetrics { id: pctMetrics; font.family: Commons.Style.font.family; font.pixelSize: 12; text: "100%" }
               }
             }
             MouseArea {
@@ -490,7 +490,7 @@ Item {
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.hoverInfo !== "" ? root.hoverInfo : defaultText)
       color: root.fg
-      font.family: Style.font.family; font.pixelSize: 10
+      font.family: Commons.Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
     }
 

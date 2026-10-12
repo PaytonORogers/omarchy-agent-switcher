@@ -1,13 +1,13 @@
 import QtQuick
 import Quickshell
-import qs.Commons
+import qs.Commons as Commons
 
 FloatingWindow {
   id: root
   property var result: ({state: "checking"})
-  property color background: Color.background
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color background: Commons.Color.background
+  property color foreground: Commons.Color.foreground
+  property color accent: Commons.Color.accent
   signal actionRequested(string action)
   title: "Agent switcher sign-in: " + (result.name || "agent")
   implicitWidth: 440
@@ -17,11 +17,11 @@ FloatingWindow {
   Column {
     id: body
     x: 16; y: 16; width: parent.width - 32; spacing: 12
-    Text { width: parent.width; text: "Add " + (root.result.name || "agent"); color: root.foreground; font.family: Style.font.family; font.pixelSize: 16; font.bold: true }
+    Text { width: parent.width; text: "Add " + (root.result.name || "agent"); color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 16; font.bold: true }
     Text {
       width: parent.width; wrapMode: Text.WordWrap
       text: root.result.message || (root.result.state === "confirmation_needed" ? "This agent has no supported sign-in check. If you have already signed in, confirm below. Otherwise open the agent to sign in." : root.result.state === "signed_out" ? "This agent reports that it is signed out. Open it to sign in, then choose Check again." : "Checking sign-in…")
-      color: root.foreground; font.family: Style.font.family; font.pixelSize: 13
+      color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 13
     }
     Flow {
       width: parent.width; spacing: 8

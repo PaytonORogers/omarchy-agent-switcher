@@ -1,12 +1,12 @@
 import QtQuick
-import qs.Commons
+import qs.Commons as Commons
 
 Rectangle {
   id: root
   property string text: ""
-  property color background: Color.background
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color background: Commons.Color.background
+  property color foreground: Commons.Color.foreground
+  property color accent: Commons.Color.accent
   signal clicked()
   implicitWidth: label.implicitWidth + 24
   implicitHeight: 30
@@ -20,6 +20,6 @@ Rectangle {
   activeFocusOnTab: true
   Keys.onReturnPressed: clicked()
   Keys.onSpacePressed: clicked()
-  Text { id: label; anchors.centerIn: parent; text: root.text; color: root.foreground; font.family: Style.font.family; font.pixelSize: 12 }
+  Text { id: label; anchors.centerIn: parent; text: root.text; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 12 }
   MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; onClicked: root.clicked() }
 }
