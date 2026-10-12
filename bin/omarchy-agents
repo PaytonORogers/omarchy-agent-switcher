@@ -267,6 +267,13 @@ setup_restore_rules() {
   hyprctl reload >/dev/null 2>&1 || true
   rm -rf "$setup_rules_dir"; setup_rules_dir=""
 }
+setup_close_login_window() {
+  local address
+  address=$(client_addr "$1")
+  [[ -n $address ]] || return 0
+  is_addr "$address" || return 1
+  hyprctl eval "hl.dispatch(hl.dsp.window.close({ window = 'address:$address' }))" >/dev/null 2>&1
+}
 setup_login_window() { # registry line, normal workspace ID
   local id n kind det c l ic address launchline
   IFS='|' read -r id n kind det c l ic <<<"$1"
@@ -274,7 +281,10 @@ setup_login_window() { # registry line, normal workspace ID
   address=$(client_addr "$c")
   if [[ -n $address ]] && is_addr "$address"; then
     hyprctl eval "pcall(function() hl.dispatch(hl.dsp.window.move({ workspace = '$2', follow = false, window = 'address:$address' })) end) pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$address' })) end)" >/dev/null 2>&1
-    return
+    if [[ $(hyprctl -j clients | jq -r --arg a "$address" 'first(.[] | select(.address == $a)).floating // false') == true ]]; then
+      hyprctl eval "hl.dispatch(hl.dsp.window.float({ window = 'address:$address', action = 'toggle' }))" >/dev/null 2>&1 || return 1
+    fi
+    return 0
   fi
   launchline=$(agent_line "$1"); IFS='|' read -r _ _ l _ <<<"$launchline"; l=$(trim "$l")
   # Avoid a second Cursor process even if its window has not mapped yet.
@@ -310,17 +320,34 @@ setup_login_gate() {
   for f in "${chosen[@]}"; do
     IFS='|' read -r id n _ <<<"$f"; id=$(trim "$id"); n=$(trim "$n")
     setup_auth_status "$id"; status=$?
-    if (( status == 0 )); then verified+=("$f"); echo "$n: signed in"; continue; fi
-    if (( status == 1 )); then echo "$n: native CLI check reports signed out."
-    else echo "$n: no automated login check; you will confirm readiness manually."; fi
-    echo "$n: finish signing in in the normal window."
+    if (( status == 0 )); then verified+=("$f"); echo "$n: native login check passed; no window needed."; continue; fi
+    if (( status == 2 )); then
+      echo "$n: setup cannot automatically check this agent's login."
+      while true; do
+        read -r -p "$n: y = already signed in/ready, l = open for sign-in, s = skip, q = cancel: " reply || return 1
+        case ${reply,,} in
+          y|yes) verified+=("$f"); break ;;
+          l|login) break ;;
+          s|skip) break ;;
+          q|quit) echo "Setup cancelled; config unchanged."; return 1 ;;
+          *) echo "Choose y, l, s, or q." ;;
+        esac
+      done
+      case ${reply,,} in y|yes|s|skip) continue ;; esac
+    else
+      read -r -p "$n reports signed out. Enter opens sign-in; s = skip, q = cancel: " reply || return 1
+      case ${reply,,} in s|skip) continue ;; q|quit) echo "Setup cancelled; config unchanged."; return 1 ;; esac
+    fi
+    echo "Opening $n on the normal workspace, outside the overlay."
+    echo "Finish signing in, then return to this setup terminal. You may close the agent window normally."
     setup_login_window "$f" "$workspace" || die "cannot open $n for sign-in"
     while true; do
-      read -r -p "$n: Enter to check/confirm, s to skip, q to cancel setup: " reply || return 1
+      read -r -p "$n: Enter to check/confirm, c to close window and check, s to skip, q to cancel setup: " reply || return 1
       case ${reply,,} in
         q|quit) echo "Setup cancelled; config unchanged."; return 1 ;;
         s|skip) echo "$n: skipped"; break ;;
-        '')
+        ''|c|close)
+          [[ ${reply,,} == c || ${reply,,} == close ]] && setup_close_login_window "$(trim "$(cut -d'|' -f5 <<<"$f")")"
           setup_auth_status "$id"; status=$?
           if (( status == 0 )); then verified+=("$f"); break
           elif (( status == 1 )); then echo "$n still reports signed out; finish login or skip."
@@ -328,7 +355,7 @@ setup_login_gate() {
             read -r -p "No reliable login check for $n. Confirm it is ready to use? [y/N]: " reply || return 1
             if [[ ${reply,,} == y || ${reply,,} == yes ]]; then verified+=("$f"); break; fi
           fi ;;
-        *) echo "Use Enter, s, or q." ;;
+        *) echo "Use Enter, c, s, or q." ;;
       esac
     done
   done
