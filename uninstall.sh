@@ -10,6 +10,9 @@ MARK="-- omarchy-agent-switcher"
 REQ='require("hypr.agent-switcher")'
 # Close the drop-down first so agent windows aren't stranded off-screen or invisible.
 "$HOME/.local/bin/omarchy-agents" hide >/dev/null 2>&1 || true
+# Remove exactly the status hooks and bar icon we added (backups are kept next to each file).
+"$HOME/.local/bin/omarchy-agents" hooks uninstall || true
+"$HOME/.local/bin/omarchy-agents" bar-entry remove || true
 if [[ -f $HYPR ]] && grep -qE "^($MARK|require\(\"hypr\.agent-switcher\"\))" "$HYPR"; then
   cp "$HYPR" "$HYPR.bak-agent-switcher-uninstall"
   # Delete exactly our two lines; never a range (a missing end marker must not eat the file).

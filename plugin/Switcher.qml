@@ -89,6 +89,11 @@ Item {
   }
 
   // Usage meter colour: accent below usage_warn, amber to usage_crit, red above.
+  // Agent status dots: working pulses in violet, approval amber, error red, done (waiting on you) green.
+  function statusColor(s) { return s === "approval" ? "#E3A23B" : s === "error" ? "#E5534B" : s === "done" ? "#57AB5A" : "#9B7BD4" }
+  // Grok Bot has no hooks: watch desktop notifications for its replies (restarts if it exits).
+  Process { id: notifWatch; command: [root.bin, "notif-watch"]; running: root.bin !== "" }
+  Timer { interval: 30000; repeat: true; running: root.bin !== ""; onTriggered: if (!notifWatch.running) notifWatch.running = true }
   function usageColor(u) { return u >= usageCrit ? "#E5534B" : (u >= usageWarn ? "#E3A23B" : accent) }
   // Refresh usage every usage_refresh_min while open (the script caches and rate-limits).
   Timer { interval: Math.max(1, root.usageRefreshMin) * 60000; repeat: true; running: root.opened && root.usageDisplay !== "off"; onTriggered: root.run(["usage"]) }
@@ -121,6 +126,7 @@ Item {
     function refresh(): string { if (root.opened) root.run(["show", root.active]); return "ok" }
     function state(): string { return root.opened ? "open:" + root.active : "closed" }
     function closeSheet(): string { root.hideSheet(); return "ok" }
+    function status(): string { if (root.opened) root.run(["show", root.active]); return "ok" }   // an agent status changed
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
     function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
@@ -245,8 +251,22 @@ Item {
               opacity: tab.sel ? 0.45 : 0.3
               Behavior on width { NumberAnimation { duration: 300 } }
             }
+            readonly property string status: modelData.status || "idle"
+            // status dot, top-right corner of the tab
+            Rectangle {
+              visible: tab.status !== "idle"
+              width: 7; height: 7; radius: 3.5; z: 5
+              anchors { right: parent.right; top: parent.top; rightMargin: 7; topMargin: 4 }
+              color: root.statusColor(tab.status)
+              border.width: 1; border.color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.8)
+              SequentialAnimation on opacity {
+                running: tab.status === "working"; loops: Animation.Infinite
+                NumberAnimation { to: 0.3; duration: 700 } NumberAnimation { to: 1; duration: 700 }
+                onRunningChanged: if (!running) parent.opacity = 1
+              }
+            }
             Accessible.role: Accessible.PageTab
-            Accessible.name: modelData.name + (st === "starting" ? ", starting" : st === "stopped" ? ", not started" : "") + (hasUsage ? ", " + (modelData.usageLabel || Math.round(usage * 100) + "% used") : "")
+            Accessible.name: modelData.name + (status !== "idle" ? ", " + status : "") + (st === "starting" ? ", starting" : st === "stopped" ? ", not started" : "") + (hasUsage ? ", " + (modelData.usageLabel || Math.round(usage * 100) + "% used") : "")
             Accessible.selected: sel
             Row {
               id: content

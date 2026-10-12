@@ -86,6 +86,11 @@ if (( NAUT )); then
   pgrep -x nautilus >/dev/null && { nautilus -q >/dev/null 2>&1 || true; }
 fi
 
+echo ":: agent status hooks"
+"$BIN/omarchy-agents" hooks install | sed 's/^/   /'
+"$BIN/omarchy-agents" bar-entry add | sed 's/^/   /'
+echo "   Codex: open Codex once and run /hooks to approve the omarchy-agents hooks (Codex skips new hooks until approved)."
+
 hyprctl reload >/dev/null
 errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland config errors:"; echo "$errs"; }
 

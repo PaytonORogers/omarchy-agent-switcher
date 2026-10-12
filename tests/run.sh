@@ -217,6 +217,62 @@ G=$($OA geometry); check "strip_edge = top overrides the bar" "[[ \$G == *edge=t
 echo '{"bar":{"position":"top"}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"; echo "strip_edge = bottom" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 G=$($OA geometry); check "strip_edge = bottom overrides a top bar" "[[ \$G == *edge=bottom* ]]"
 
+echo "== agent status dots"
+setup_world; monitors 0; clients "class.a:0xa1:243" "class.b:0xb1:243"
+C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+sed -i 's/^A | class.a | agent-a | SUPER + SHIFT + A |$/A | class.a | agent-a | SUPER + SHIFT + A | | claude/; s/^B | class.b | agent-b | |$/B | class.b | agent-b | | | grok/; s/^C | class.c | agent-c | |$/C | class.c | agent-c | | | grok-bot/' "$C"
+SD=$XDG_STATE_HOME/omarchy-agent-switcher/status
+st() { $OA status --json | jq -r --arg c "$1" '.agents[] | select(.class == $c) | .state'; }
+check "no status -> idle" "[[ \$(st class.a) == idle && \$($OA status --json | jq -r .top) == idle ]]"
+$OA status-set A working; check "status-set by name" "[[ \$(st class.a) == working ]]"
+check "status-set refreshes the strip" "grep -qx 'agentswitcher status' $FAKE/shell"
+! $OA status-set A bogus 2>/dev/null; check "invalid state rejected" "[[ \$? == 0 && \$(st class.a) == working ]]"
+$OA status-set class.b done; check "top: done beats working" "[[ \$($OA status --json | jq -r .top) == done ]]"
+$OA status-set C error; check "top: error beats done" "[[ \$($OA status --json | jq -r .top) == error ]]"
+$OA status-set A approval; check "top: approval beats error" "[[ \$($OA status --json | jq -r .top) == approval ]]"
+echo "working $(( $(date +%s) - 700 ))" > "$SD/class.a"; check "stale working (>10 min) shows idle" "[[ \$(st class.a) == idle ]]"
+echo "done $(( $(date +%s) - 7000 ))" > "$SD/class.a"; check "done never goes stale" "[[ \$(st class.a) == done ]]"
+$OA status-set C idle; check "idle removes the file" "[[ ! -f $SD/class.c ]]"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "payload carries per-tab status" "grep summon $FAKE/shell | tail -1 | jq -e '.agents[] | select(.name==\"B\") | .status == \"done\"' >/dev/null 2>&1 || grep summon $FAKE/shell | tail -1 | grep -q '\"name\":\"B\"[^}]*\"status\":\"done\"'"
+check "focusing a done tab clears it" "[[ \$(st class.a) == idle ]]"
+monitors 1; $OA show B >/dev/null 2>&1; check "switching to a done tab clears it" "[[ \$(st class.b) == idle ]]"
+$OA status-set A working; $OA show A >/dev/null 2>&1; check "focusing keeps working" "[[ \$(st class.a) == working ]]"
+monitors 0
+echo '{"hook_event_name":"UserPromptSubmit","session_id":"x"}' | $OA hook claude; check "claude prompt -> working" "[[ \$(st class.a) == working ]]"
+echo '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}' | $OA hook claude; check "claude permission notification -> approval" "[[ \$(st class.a) == approval ]]"
+echo '{"hook_event_name":"Stop"}' | $OA hook claude; check "claude stop -> done" "[[ \$(st class.a) == done ]]"
+OUT=$(echo '{"hook_event_name":"Stop"}' | $OA hook claude); check "hook prints nothing" "[[ -z \$OUT ]]"
+echo '{"hook_event_name":"StopFailure","hookEventName":"stop_failure"}' | $OA hook claude
+check "grok payload via Claude's settings is tagged grok" "[[ \$(st class.b) == error && \$(st class.a) == done ]]"
+echo '{"hook_event_name":"PermissionRequest"}' | $OA hook codex; check "agent not configured: ignored" "! ls $SD | grep -q codex"
+echo 'not json' | $OA hook claude; check "garbage input is harmless" "[[ \$? == 0 ]]"
+printf 'signal time=1 sender=:1.5 -> destination=org.freedesktop.Notifications serial=9 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify\n   string "Signal"\n' | $OA notif-watch --stdin
+check "other app notification ignored" "[[ \$(st class.c) == idle ]]"
+printf 'signal time=1 sender=:1.5 -> destination=org.freedesktop.Notifications serial=9 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify\n   string "Grok Bot"\n   uint32 0\n' | $OA notif-watch --stdin
+check "Grok Bot notification -> done (new reply)" "[[ \$(st class.c) == done ]]"
+
+echo "== hook merge / unmerge"
+mkdir -p "$HOME/.claude"; echo '{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine.sh"}]}]}}' > "$HOME/.claude/settings.json"
+cp "$HOME/.claude/settings.json" "$T/orig.json"
+$OA hooks install >/dev/null
+CS=$HOME/.claude/settings.json
+check "claude: our hooks added, theirs kept" "jq -e '.model==\"opus\" and (.hooks.Stop|length)==2 and .hooks.Stop[0].hooks[0].command==\"mine.sh\" and (.hooks.UserPromptSubmit[0].hooks[0].command|test(\"hook claude\$\"))' $CS >/dev/null"
+check "claude: backup made" "ls $HOME/.claude/ | grep -q 'settings.json.bak-agent-switcher-'"
+check "codex + grok files created" "jq -e '.hooks.PermissionRequest[0].hooks[0].command|test(\"hook codex\$\")' $HOME/.codex/hooks.json >/dev/null && jq -e '.hooks.StopFailure[0].hooks[0].command|test(\"hook grok\$\")' $HOME/.grok/hooks/omarchy-agent-switcher.json >/dev/null"
+A1=$(cat $CS $HOME/.codex/hooks.json); nb=$(ls $HOME/.claude | grep -c bak-agent)
+$OA hooks install >/dev/null; check "install is idempotent (no dupes, no new backup)" "[[ \$(cat $CS $HOME/.codex/hooks.json) == \"\$A1\" && \$(ls $HOME/.claude | grep -c bak-agent) == $nb ]]"
+$OA hooks uninstall >/dev/null
+check "first backup still holds the original" "[[ \$(jq -cS . \$(ls $HOME/.claude/settings.json.bak-agent-switcher-* | sort | head -1)) == \"\$(jq -cS . $T/orig.json)\" ]]"
+check "uninstall restores the user's settings exactly" "[[ \$(jq -cS . $CS) == \"\$(jq -cS . $T/orig.json)\" ]]"
+check "uninstall removes files we created" "[[ ! -f $HOME/.codex/hooks.json && ! -f $HOME/.grok/hooks/omarchy-agent-switcher.json ]]"
+$OA hooks uninstall >/dev/null; check "uninstall is idempotent" "[[ \$(jq -cS . $CS) == \"\$(jq -cS . $T/orig.json)\" ]]"
+mkdir -p "$XDG_CONFIG_HOME/omarchy"; echo '{"bar":{"centerAnchor":"omarchy.clock","layout":{"center":[{"id":"omarchy.clock"},{"id":"omarchy.weather"}],"right":[{"id":"payton.chatbar"}]}}}' > "$XDG_CONFIG_HOME/omarchy/shell.json"
+$OA bar-entry add >/dev/null; $OA bar-entry add >/dev/null
+check "bar icon placed directly left of the clock, once" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"io.github.paytonorogers.agent-switcher\",\"omarchy.clock\",\"omarchy.weather\"]' && \$(jq -r .bar.centerAnchor $XDG_CONFIG_HOME/omarchy/shell.json) == omarchy.clock ]]"
+$OA bar-entry remove >/dev/null; check "bar icon removed" "[[ \$(jq -c '[.bar.layout.center[].id]' $XDG_CONFIG_HOME/omarchy/shell.json) == '[\"omarchy.clock\",\"omarchy.weather\"]' ]]"
+check "manifest declares the bar widget" "jq -e '(.kinds|index(\"bar-widget\")) and .entryPoints.barWidget==\"plugin/BarIcon.qml\"' $ROOT/manifest.json >/dev/null && [[ -f $ROOT/plugin/BarIcon.qml ]]"
+
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
 echo "Q | class.q | env FOO=1 agent-a --flag 'two  spaces' |" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"

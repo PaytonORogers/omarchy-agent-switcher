@@ -43,7 +43,7 @@ find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 # ---------- config ----------------------------------------------------------
 declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
   [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto )
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto [status_stale_min]=10 )
 names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); conf_warnings=()
 # Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
 program_of() {
@@ -615,7 +615,7 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
   for i in "${!names[@]}"; do
     ic=$(tab_icon "${icons[$i]}" "${cmds[$i]}")
     st=stopped; [[ -n ${ADDR[${classes[$i]}]:-} ]] && st=running; [[ -f $STATE/launch.${classes[$i]} ]] && st=starting
-    args+=("${names[$i]}" "$ic" "$st" "$(provider_of "$i")")
+    args+=("${names[$i]}" "$ic" "$st" "$(provider_of "$i")" "$(status_of "${classes[$i]}")")
   done
   local uj; uj=$(usage_json)
   jq -cn --arg s "${names[$1]}" --arg acc "$(accent)" --arg bin "$SELF" --arg mon "$MON" \
@@ -623,7 +623,7 @@ payload() { # one jq call: tabs (name, icon, running, starting) + strip settings
     --argjson hint "$(show_hint && echo true || echo false)" --argjson seq "$(date +%s%3N)" \
     --argjson sc "$(shortcuts_json)" --argjson sheet "${SHEET:-false}" --argjson u "$uj" \
     --arg ud "${S[usage_display]}" --argjson uw "$(num "${S[usage_warn]}" 0.7)" --argjson uc "$(num "${S[usage_crit]}" 0.9)" --argjson ur "$(num "${S[usage_refresh_min]}" 10)" \
-    '[$ARGS.positional | range(0; length; 4) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2], usage: ($u[.[$j+3]].p // -1), usageLabel: ($u[.[$j+3]].t // "")}] as $a
+    '[$ARGS.positional | range(0; length; 5) as $j | {name: .[$j], icon: .[$j+1], state: .[$j+2], status: .[$j+4], usage: ($u[.[$j+3]].p // -1), usageLabel: ($u[.[$j+3]].t // "")}] as $a
      | {agents:$a,active:$s,accent:$acc,bin:$bin,monitor:$mon,top:$top,edge:$edge,toggleKey:$key,shortcutsKey:$sk,prevKey:$pk,nextKey:$nk,hint:$hint,seq:$seq,shortcuts:$sc,sheet:$sheet,usageDisplay:$ud,usageWarn:$uw,usageCrit:$uc,usageRefreshMin:$ur}' \
     --args "${args[@]}"
 }
@@ -647,14 +647,14 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   [[ -n $a ]] && { q "hl.dsp.focus({ window = 'address:$a' })"; keep_cursor; }
   LUA+="pcall(function() if agent_switcher then agent_switcher.on() end end) "
   flush
-  echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
+  status_seen "$i"; echo "${names[$i]}" > "$STATE/last"; date +%s%3N > "$STATE/acted"; strip_show "$i"
   (( pending )) && { starting "$i"; await_window "$i"; }
   usage_refresh
   return 0
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
   local i=$1 cur a b c from out pending=0 j x
-  cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
+  status_seen "$i"; cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
   ensure "$i" || pending=1; a=$(addr_of "$i"); b=$(addr_of "$cur"); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
   if (( i > cur )); then from=$(right_of); else from=$(left_of "${TW[$c]}"); fi
@@ -703,6 +703,108 @@ doctor() {
   return 0
 }
 
+# ---------- agent status (hooks, notifications) -------------------------------
+# One file per agent class: "<state> <epoch>". working | approval | error | done; idle = no file.
+STATUSD=$STATE/status
+status_prio() { case $1 in approval) echo 4 ;; error) echo 3 ;; done) echo 2 ;; working) echo 1 ;; *) echo 0 ;; esac; }
+status_set() { # status_set <class> <state>
+  local c=$1 st=$2
+  valid_class "$c" || return 1
+  case $st in working|approval|error|done) mkdir -p "$STATUSD"; echo "$st $(date +%s)" > "$STATUSD/$c.tmp" && mv "$STATUSD/$c.tmp" "$STATUSD/$c" ;;
+    idle) rm -f "$STATUSD/$c" ;; *) return 1 ;; esac
+  log "status $c $st"
+  ( timeout 2 omarchy-shell -q agentswitcher status >/dev/null 2>&1 & ) 9>&- 2>/dev/null
+  return 0
+}
+status_of() { # effective state; a "working" with no news for status_stale_min minutes is idle
+  local st t
+  read -r st t < "$STATUSD/$1" 2>/dev/null || { echo idle; return; }
+  if [[ $st == working ]] && (( $(date +%s) - ${t:-0} > $(num "${S[status_stale_min]}" 10 | cut -d. -f1) * 60 )); then echo idle; return; fi
+  case $st in working|approval|error|done) echo "$st" ;; *) echo idle ;; esac
+}
+status_seen() { [[ $(status_of "${classes[$1]}") == done ]] && status_set "${classes[$1]}" idle; return 0; }
+status_json() {
+  local i out="" st top=idle
+  for i in "${!names[@]}"; do st=$(status_of "${classes[$i]}")
+    (( $(status_prio "$st") > $(status_prio "$top") )) && top=$st
+    out+="${out:+,}$(jq -cn --arg n "${names[$i]}" --arg c "${classes[$i]}" --arg s "$st" '{name:$n,class:$c,state:$s}')"; done
+  echo "{\"top\":\"$top\",\"agents\":[${out}]}"
+}
+class_for() { local i; for i in "${!names[@]}"; do [[ $(provider_of "$i") == "$1" ]] && { echo "${classes[$i]}"; return 0; }; done; return 1; }
+hook_event() { # hook <claude|codex|grok>: called by the agent's hook system with the event JSON on stdin; prints nothing
+  local tag=$1 in ev nt st c
+  in=$(timeout 2 cat 2>/dev/null)
+  # Grok Build also runs Claude's hooks; its payload is recognisable by the camelCase hookEventName key.
+  [[ $(jq -r 'has("hookEventName")' <<<"$in" 2>/dev/null) == true ]] && tag=grok
+  ev=$(jq -r '.hook_event_name // .hookEventName // empty' <<<"$in" 2>/dev/null)
+  case $ev in
+    UserPromptSubmit|user_prompt_submit|PreToolUse|pre_tool_use|PostToolUse|post_tool_use) st=working ;;
+    PermissionRequest|permission_request) st=approval ;;
+    Notification|notification)
+      nt=$(jq -r '[.notification_type, .notificationType, .type, .message] | map(select(. != null)) | join(" ")' <<<"$in" 2>/dev/null); nt=${nt,,}
+      case $nt in *permission*|*approv*) st=approval ;; *) st=done ;; esac ;;
+    Stop|stop|StopCancelled|stop_cancelled) st=done ;;
+    StopFailure|stop_failure|PostToolUseFailure) st=error ;;
+    SessionStart|session_start|SessionEnd|session_end) st=idle ;;
+    *) return 0 ;;
+  esac
+  c=$(class_for "$tag") || return 0
+  # PostToolUseFailure is a failed tool, not a failed turn: keep it "working".
+  [[ $ev == PostToolUseFailure ]] && st=working
+  status_set "$c" "$st"
+}
+notif_watch() { # Grok Bot has no hooks: a notification from it means a new reply is waiting
+  local c line want=0 app
+  c=$(class_for grok-bot) || { sleep 600; return 0; }
+  if [[ ${1:-} == --stdin ]]; then cat; else exec dbus-monitor --session "interface='org.freedesktop.Notifications',member='Notify'" 2>/dev/null; fi |
+  while IFS= read -r line; do
+    if [[ $line == *member=Notify* ]]; then want=1
+    elif (( want )) && [[ $line =~ ^[[:space:]]*string\ \"(.*)\"$ ]]; then
+      app=${BASH_REMATCH[1]}; want=0
+      [[ $app == "Grok Bot" ]] && status_set "$c" done
+    fi
+  done
+}
+bak_path() { local b; b="$1.bak-agent-switcher-$(date +%Y%m%d%H%M%S)"; local n=$b k=1; while [[ -e $n ]]; do n="$b-$k"; k=$((k+1)); done; echo "$n"; }
+hook_targets() { # <file> <tag> <events...> for each agent we hook
+  local h=$HOME
+  echo "$h/.claude/settings.json claude UserPromptSubmit PreToolUse PermissionRequest Notification Stop SessionEnd"
+  echo "$h/.codex/hooks.json codex SessionStart UserPromptSubmit PreToolUse PermissionRequest Stop"
+  echo "$h/.grok/hooks/omarchy-agent-switcher.json grok UserPromptSubmit PreToolUse Notification Stop StopFailure StopCancelled SessionEnd"
+}
+OURS='test("omarchy-agents\"? hook ")'
+hooks_strip() { jq "if .hooks then .hooks |= (with_entries(.value |= (map(.hooks |= map(select((.command // \"\") | $OURS | not))) | map(select((.hooks | length) > 0)))) | with_entries(select((.value | length) > 0))) else . end | if .hooks == {} then del(.hooks) else . end"; }
+hooks_cmd() {
+  local f tag evs new cur bak bin=$HOME/.local/bin/omarchy-agents created=$STATE/hooks-created
+  mkdir -p "$STATE"; touch "$created"
+  while read -r f tag evs; do
+    if [[ $1 == install ]]; then
+      if [[ -f $f ]]; then cur=$(cat "$f"); jq -e . <<<"$cur" >/dev/null 2>&1 || { echo "skipped $f: not valid JSON" >&2; continue; }
+      else cur='{}'; grep -qxF "$f" "$created" || echo "$f" >> "$created"; fi
+      new=$(hooks_strip <<<"$cur" | jq --arg cmd "\"$bin\" hook $tag" --args '
+        reduce $ARGS.positional[] as $e (.; .hooks[$e] = ((.hooks[$e] // []) + [{hooks: [{type: "command", command: $cmd, timeout: 5}]}]))' $evs)
+    else
+      [[ -f $f ]] || continue; cur=$(cat "$f"); new=$(hooks_strip <<<"$cur") || continue
+    fi
+    [[ "$(jq -cS . <<<"$new")" == "$(jq -cS . <<<"$cur")" ]] && continue
+    if [[ $1 == uninstall ]] && grep -qxF "$f" "$created" && [[ $(jq -c . <<<"$new") == "{}" ]]; then
+      rm -f "$f"; grep -vxF "$f" "$created" > "$created.tmp"; mv "$created.tmp" "$created"; echo "removed $f"; continue; fi
+    if [[ -f $f ]]; then bak=$(bak_path "$f"); cp -p "$f" "$bak"; echo "backup $bak"; fi
+    mkdir -p "$(dirname "$f")"; jq . <<<"$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "$1 hooks: $f"
+  done < <(hook_targets)
+}
+bar_entry() { # add|remove our bar icon in shell.json: center section, directly left of the clock
+  local f=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json id=io.github.paytonorogers.agent-switcher cur new
+  [[ -f $f ]] || return 0; cur=$(cat "$f")
+  if [[ $1 == add ]]; then
+    new=$(jq --arg id "$id" 'if ([.bar.layout[]?[]?.id] | index($id)) then . else
+      .bar.layout.center = ((.bar.layout.center // []) as $r | ($r | map(.id) | index("omarchy.clock")) as $k
+        | if $k == null then [{id: $id}] + $r else $r[:$k] + [{id: $id}] + $r[$k:] end) end' <<<"$cur")
+  else new=$(jq --arg id "$id" 'if .bar.layout then .bar.layout |= map_values(map(select(.id != $id))) else . end' <<<"$cur"); fi
+  [[ -n $new && "$(jq -cS . <<<"$new")" != "$(jq -cS . <<<"$cur")" ]] || return 0
+  cp -p "$f" "$(bak_path "$f")"; echo "$new" > "$f.tmp" && mv "$f.tmp" "$f"; echo "bar icon ${1/add/added to}${1/remove/removed from} $f"
+}
+
 # Keep the log small.
 [[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
 
@@ -717,6 +819,13 @@ case $cmd in
         if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
           runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit 0 ;;
   -h|--help|help) sed -n '5,13p' "$0"; exit 0 ;;
+  status-set) load_conf; c=${2:-}; i=$(idx_of "$c"); [[ -n $i ]] && c=${classes[$i]}
+          status_set "$c" "${3:-}" || die "usage: status-set <agent> working|approval|error|done|idle"; exit 0 ;;
+  status) load_conf; if [[ ${2:-} == --json ]]; then status_json; else status_json | jq -r '.agents[] | "\(.name): \(.state)"'; fi; exit 0 ;;
+  hook)   load_conf 2>/dev/null; hook_event "${2:-}" 2>/dev/null; exit 0 ;;
+  notif-watch) load_conf; notif_watch "${2:-}"; exit 0 ;;
+  hooks)  load_conf; hooks_cmd "${2:-install}"; exit 0 ;;
+  bar-entry) bar_entry "${2:-add}"; exit 0 ;;
 esac
 runtime_init
 case $cmd in

@@ -5,10 +5,33 @@
   "version": "1.2.0",
   "description": "Tab strip for the omarchy-agents Super+A drop-down: one hotkey for every AI agent.",
   "kinds": [
-    "panel"
+    "panel",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "panel": "plugin/Switcher.qml"
+    "panel": "plugin/Switcher.qml",
+    "barWidget": "plugin/BarIcon.qml"
+  },
+  "barWidget": {
+    "displayName": "Agent status",
+    "description": "Agents icon: click opens the agent panel; dot shows working / approval / error / done.",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "pollMs": 2000
+    },
+    "schema": [
+      {
+        "key": "pollMs",
+        "type": "integer",
+        "label": "Status poll interval (ms)",
+        "min": 500,
+        "max": 60000,
+        "step": 500,
+        "defaultValue": 2000
+      }
+    ]
   }
 }
