@@ -24,10 +24,10 @@ configuration_rows() {
 catalog_json() {
   load_conf
   local enabled; enabled=$(printf '%s\n' "${names[@]+"${names[@]}"}" | jq -R . | jq -sc 'map(select(length>0))')
-  configuration_rows | jq -sc --argjson enabled "$enabled" --arg open "${S[open_on]}" --arg hint "${S[show_hint]:-true}" --arg usage "${S[usage_display]}" --arg opacity "${S[opacity]}" '
+  configuration_rows | jq -sc --argjson enabled "$enabled" --argjson shortcuts "$(shortcuts_json)" --arg open "${S[open_on]}" --arg hint "${S[show_hint]:-true}" --arg usage "${S[usage_display]}" --arg opacity "${S[opacity]}" '
     reduce .[] as $a ([]; if any(.[]; (.class|ascii_downcase)==($a.class|ascii_downcase)) then . else .+[$a] end)
     | map(. + {enabled: (.name as $n | $enabled | index($n)!=null)} | del(.line))
-    | {agents:., enabled:$enabled, settings:{open_on:$open,show_hint:($hint!="false"),usage_display:$usage,opacity:$opacity}}'
+    | {agents:., enabled:$enabled, shortcuts:$shortcuts, settings:{open_on:$open,show_hint:($hint!="false"),usage_display:$usage,opacity:$opacity}}'
 }
 auth_json() {
   local row id rc

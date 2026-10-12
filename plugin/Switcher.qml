@@ -557,7 +557,7 @@ Item {
       horizontalAlignment: Text.AlignHCenter
       elide: Text.ElideRight
       TextMetrics { id: hintMetrics; font: hintLine.font; text: hintLine.defaultText }
-      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) + " shortcuts" : "Settings → Keyboard shortcuts")
+      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) + " shortcuts" : "Shortcuts in Settings")
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.buttonHint !== "" ? root.buttonHint : root.hoverInfo !== "" ? root.hoverInfo : defaultText)
@@ -570,12 +570,13 @@ Item {
       id: configCard
       visible: root.controlMode !== ""
       mode: root.controlMode; agent: root.menuFor; catalog: root.catalog; error: root.controlError
+      shortcuts: root.catalog.shortcuts || root.shortcuts
+      maximumContentHeight: Math.min(740, Math.max(180, root.screenFor(root.monitorName) ? root.screenFor(root.monitorName).height - root.stripTop - 130 : 600))
       anchors.top: root.edge === "top" ? strip.bottom : parent.top; anchors.topMargin: root.edge === "top" ? 8 : 0; anchors.horizontalCenter: strip.horizontalCenter
       background: root.bg; foreground: root.fg; accent: root.accent
       onDismissed: root.dismissControls()
       onAddRequested: (name) => root.beginLogin(name)
       onArrangeRequested: (name) => root.arrange(name)
-      onShortcutsRequested: root.toggleSheet()
       onSettingRequested: (key, value) => root.mutate(["setting", key, value])
       onCommandRequested: (command, name) => {
         if (command === "left" || command === "right") root.mutate(["move", name, command])

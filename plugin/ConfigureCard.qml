@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import qs.Commons as Commons
 
 Rectangle {
@@ -6,6 +7,8 @@ Rectangle {
   property string mode: ""
   property string agent: ""
   property var catalog: ({agents: [], enabled: [], settings: {}})
+  property var shortcuts: []
+  property real maximumContentHeight: 740
   property string error: ""
   property color background: Commons.Color.background
   property color foreground: Commons.Color.foreground
@@ -14,7 +17,6 @@ Rectangle {
   signal commandRequested(string command, string argument)
   signal settingRequested(string key, string value)
   signal arrangeRequested(string name)
-  signal shortcutsRequested()
   signal dismissed()
   width: 390
   height: content.implicitHeight + 28
@@ -84,10 +86,20 @@ Rectangle {
       }
       ControlButton { width: content.width; text: "Arrange tabs · Super+Shift+←/→"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.arrangeRequested(root.agent) }
     }
-    Column {
+    Flickable {
+      id: settingsViewport
       visible: root.mode === "settings"
+      width: parent.width; implicitHeight: Math.min(settingsContent.implicitHeight, root.maximumContentHeight)
+      contentHeight: settingsContent.implicitHeight; contentWidth: width
+      clip: true; boundsBehavior: Flickable.StopAtBounds; flickableDirection: Flickable.VerticalFlick
+      ScrollBar.vertical: ScrollBar {
+        policy: ScrollBar.AsNeeded
+        contentItem: Rectangle { implicitWidth: 3; implicitHeight: 24; radius: 1.5; color: root.accent }
+        background: Rectangle { color: "transparent" }
+      }
+      Column {
+      id: settingsContent
       width: parent.width; spacing: 12
-      ControlButton { width: content.width; text: "Keyboard shortcuts"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.shortcutsRequested() }
       ControlButton { width: content.width; text: "Arrange tabs · Super+Shift+←/→"; enabled: (root.catalog.enabled || []).length > 1; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.arrangeRequested("") }
       SettingChoices {
         width: content.width; title: "Opening target"; value: root.catalog.settings.open_on || "last"
@@ -111,6 +123,8 @@ Rectangle {
         width: content.width; title: "Agent window opacity"; value: root.opacityValue(); choices: root.opacityChoices()
         background: root.background; foreground: root.foreground; accent: root.accent
         onChosen: (value) => root.settingRequested("opacity", value)
+      }
+      ShortcutsList { width: content.width - 8; entries: root.shortcuts; foreground: root.foreground }
       }
     }
   }
