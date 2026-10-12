@@ -59,6 +59,10 @@ Item {
       lastShow = Date.now()
     } catch (e) {}
   }
+  // Closing the sheet on purpose (key, click, Esc) hands the keyboard back to the agent:
+  // the strip is an on-demand layer surface and otherwise keeps keyboard focus.
+  function hideSheet() { if (!sheet) return; sheet = false; if (opened) run(["refocus"]) }
+  function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
   function close() { opened = false; menuFor = ""; sheet = false }
   // One process per call, so quick clicks/scrolls are never dropped.
   Component { id: runner; Process { onExited: destroy() } }
@@ -111,7 +115,7 @@ Item {
     function state(): string { return root.opened ? "open:" + root.active : "closed" }
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
-    function shortcuts(): string { if (!root.opened) return "closed"; root.sheet = !root.sheet; return root.sheet ? "shown" : "hidden" }
+    function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
   }
 
   // Touchpads send many small wheel steps: switch once per full notch, at most every 150 ms.
@@ -152,7 +156,7 @@ Item {
       border.color: root.accent
       Accessible.role: Accessible.Dialog
       Accessible.name: "Agent switcher shortcuts"
-      MouseArea { anchors.fill: parent; onClicked: root.sheet = false }
+      MouseArea { anchors.fill: parent; onClicked: root.hideSheet() }
       Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
       Grid {
         id: grid
@@ -191,8 +195,8 @@ Item {
       Keys.onRightPressed: root.run(["next"])
       Keys.onTabPressed: root.run(["next"])
       Keys.onBacktabPressed: root.run(["prev"])
-      Keys.onEscapePressed: { if (root.sheet) root.sheet = false; else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
-      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.sheet = !root.sheet; e.accepted = true } else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
+      Keys.onEscapePressed: { if (root.sheet) root.hideSheet(); else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
+      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.toggleSheet(); e.accepted = true } else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
 
       WheelHandler { onWheel: (e) => root.wheel(e.angleDelta.y) }
 

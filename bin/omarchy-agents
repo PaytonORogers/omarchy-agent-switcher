@@ -712,6 +712,9 @@ case $cmd in
           fi
           visible && strip_show "$(idx_of "$last")" ;;
   hide)   hide_all ;;
+  refocus) # the cheat sheet closed: hand the keyboard back from the strip to the active agent window
+          i=$(idx_of "$last"); a=$([[ -n $i ]] && addr_of "$i")
+          if visible && [[ -n $a ]]; then q "hl.dsp.focus({ window = 'address:$a' })"; flush; fi ;;
   reset-size) reset_size "${2:-all}" ;;
   send)   send_text "${@:2}" ;;
   send-files) send_files "${@:2}" ;;

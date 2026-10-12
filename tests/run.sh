@@ -246,6 +246,11 @@ echo "window=600x60 strip=400 sheet=false" > "$FAKE/metrics"; : > "$FAKE/shell"
 $OA shortcuts; sleep 0.5
 check "shortcuts with sheet closed reopens it" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":true' && ! grep -qx 'agentswitcher shortcuts' $FAKE/shell"
 rm -f "$FAKE/metrics"
+monitors 1; : > "$FAKE/calls"; $OA refocus
+check "refocus hands the keyboard back to the active agent" "evals | grep -q \"focus({ window = 'address:0xa1' })\""
+monitors 0; : > "$FAKE/calls"; $OA refocus
+check "refocus does nothing while hidden" "! evals | grep -q focus"
+check "plugin refocuses only on deliberate sheet close" "grep -q 'function hideSheet() .*run(\\[\"refocus\"\\])' $ROOT/plugin/Switcher.qml && grep -q 'root.sheet = false   // click-away' $ROOT/plugin/Switcher.qml"
 monitors 1; : > "$FAKE/shell"; $OA show B >/dev/null 2>&1; sleep 0.5; check "normal updates close the sheet" "grep summon $FAKE/shell | tail -1 | grep -q '\"sheet\":false'"
 echo "show_hint = false" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
 check "show_hint=false hides the hint line (hint:false)" "grep summon $FAKE/shell | tail -1 | grep -q '\"hint\":false'"
