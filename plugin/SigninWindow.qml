@@ -15,7 +15,7 @@ FloatingWindow {
   implicitWidth: 440
   implicitHeight: body.implicitHeight + 32
   color: background
-  onClosed: actionRequested("cancel")
+  onClosed: actionRequested("closed")
   Column {
     id: body
     x: 16; y: 16; width: parent.width - 32; spacing: 12

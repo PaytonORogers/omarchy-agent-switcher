@@ -41,7 +41,7 @@ test('opening and awaiting login do not retain the controller', () => {
   assert.equal(c.loginVisible, false);
 });
 test('overlay hide preserves a tucked-away sign-in session', () => {
-  c.close(); assert.equal(signals.length, 0); assert.equal(c.loginPresented, true);
+  c.close(); c.loginAction('closed'); assert.equal(signals.length, 0); assert.equal(c.loginPresented, true);
 });
 test('shortcut resumes and toggles the same controller', () => {
   assert.equal(c.resumeSignin('show'), 'handled'); assert.equal(c.loginVisible, true);

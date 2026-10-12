@@ -160,6 +160,7 @@ Item {
     loginProc.running = true
   }
   function loginAction(action) {
+    if (action === "closed") { if (!loginVisible || desktopBlocked) return; action = "cancel" }
     if (action === "hide") { loginVisible = false; return }
     if (action === "cancel") { loginCancelled = true; loginVisible = false; loginPresented = false; if (loginProc.running) loginProc.signal(15); return }
     if (!loginProc.running) { beginLogin(loginAgent, action); return }
