@@ -352,6 +352,11 @@ $OA rules >/dev/null 2>&1; check "rules dim via dim_special and restore it" "gre
 echo 'click_through = false' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/calls"; $OA hide >/dev/null 2>&1; $OA show A >/dev/null 2>&1
 check "click_through = false keeps modal dim_around" "evals | grep -q \"dim_around', value = '1'\""
 
+echo "== hover never resizes the strip"
+check "window width uses fixed hint metrics, not the live hint text" "grep -q 'hintLine.visible ? hintMetrics.width + 16' $ROOT/plugin/Switcher.qml && ! grep -q 'hintLine.implicitWidth' $ROOT/plugin/Switcher.qml"
+check "hint line visibility doesn't depend on hover" "grep -q 'visible: root.hint && root.menuFor === \"\"' $ROOT/plugin/Switcher.qml"
+check "no hidden reserved percent width on tabs" "! grep -q 'usageDisplay === \"percent\" || ma.containsMouse' $ROOT/plugin/Switcher.qml"
+
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
 if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do
