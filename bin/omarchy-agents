@@ -311,6 +311,8 @@ setup_login_gate() {
     IFS='|' read -r id n _ <<<"$f"; id=$(trim "$id"); n=$(trim "$n")
     setup_auth_status "$id"; status=$?
     if (( status == 0 )); then verified+=("$f"); echo "$n: signed in"; continue; fi
+    if (( status == 1 )); then echo "$n: native CLI check reports signed out."
+    else echo "$n: no automated login check; you will confirm readiness manually."; fi
     echo "$n: finish signing in in the normal window."
     setup_login_window "$f" "$workspace" || die "cannot open $n for sign-in"
     while true; do
@@ -368,6 +370,8 @@ setup() {
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi
   if (( ! yes )); then
+    echo "Pending tab order (saved after sign-in and the final setup choice):"
+    printf '  %s\n' "${ordered[@]}"
     setup_login_gate || return 1
     ordered=(); for f in "${chosen[@]}"; do ordered+=("$(trim "$(cut -d'|' -f2 <<<"$f")")"); done
   fi
