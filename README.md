@@ -13,7 +13,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
 - **Remembers** the last agent you used. Your mouse cursor is never moved, and only the visible agent dims the desktop.
-- **Agent auto-detection.** Install finds the agents you have and lets you pick and order them. Agents that aren't installed are skipped.
+- **Agent auto-detection.** Install finds the agents you have and lets you choose them. Agents that aren't installed are skipped.
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
 - **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
@@ -26,13 +26,13 @@ Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on
 ```sh
 omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
 ```
-On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to pick and order them.
+On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to choose them.
 
 Or from a checkout (interactive agent picker):
 ```sh
 git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
 cd omarchy-agent-switcher
-./install.sh          # interactive: pick + order detected agents (uses gum if present)
+./install.sh          # interactive: choose detected agents (uses gum if present)
 ./install.sh --yes    # non-interactive: enable every detected agent
 ./install.sh --no-restart   # skip the shell restart (strip loads next time the shell restarts)
 ./install.sh --with-nautilus  # optional: "Send to agent" in the Nautilus right-click menu (needs python-nautilus)

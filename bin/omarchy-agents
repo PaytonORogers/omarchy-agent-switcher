@@ -249,15 +249,17 @@ have_gum() { [[ -z ${OMARCHY_AGENTS_NO_GUM:-} ]] && command -v gum >/dev/null; }
 # https://learn.chatgpt.com/docs/developer-commands (codex login status)
 # https://code.claude.com/docs/en/cli-reference (claude auth status)
 setup_auth_status() { # 0 signed in, 1 signed out, 2 unavailable/unsupported
-  local id=$1 prog rc
+  local id=$1 prog rc output=""
   case $id in
     grok-bot) prog=$DATA/collectors/collect-grok-bot
       [[ -x $prog ]] || return 2
       timeout 15 "$prog" --check-login >/dev/null 2>&1; rc=$? ;;
     codex) prog=$(find_prog codex) || return 2
-      timeout 10 "$prog" login status >/dev/null 2>&1; rc=$? ;;
+      output=$(timeout "${OMARCHY_AGENTS_AUTH_TIMEOUT:-10}" "$prog" login status 2>&1); rc=$?
+      (( rc == 1 )) && [[ $output != *"Not logged in"* ]] && return 2 ;;
     claude) prog=$(find_prog claude) || return 2
-      timeout 10 "$prog" auth status >/dev/null 2>&1; rc=$? ;;
+      output=$(timeout "${OMARCHY_AGENTS_AUTH_TIMEOUT:-10}" "$prog" auth status 2>/dev/null); rc=$?
+      if (( rc == 1 )); then jq -e '(.authMethod == "none") or (.loggedIn == false)' >/dev/null 2>&1 <<<"$output" || return 2; fi ;;
     *) return 2 ;;
   esac
   case $rc in 0|1) return "$rc" ;; *) return 2 ;; esac
@@ -295,15 +297,15 @@ setup_login_window() { # registry line, normal workspace ID
     echo "Cursor is already starting; finish signing in in its window."; return 0
   fi
   hyprctl eval "hl.dispatch(hl.dsp.focus({ workspace = '$2' }))" >/dev/null 2>&1 || return 1
-  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "$l")" ) >/dev/null 2>&1 8>&- 9>&- &
+  ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "$l")" ) >/dev/null 2>&1 6>&- 8>&- 9>&- &
 }
 setup_login_gate() {
   local f id n c reply status workspace
   local -a verified=()
   # Hide before excluding classes. Login never runs in the switcher overlay.
   "$SELF" hide >/dev/null 2>&1 || true
-  exec 8>"$STATE/lock"
-  flock -n 8 || die "another switcher action is running; retry setup"
+  exec 6>"$STATE/signin.lock"
+  flock -n 6 || die "another switcher action is running; retry setup"
   workspace=$(hyprctl -j monitors | jq -r 'first(.[] | select(.focused)).activeWorkspace.id // empty')
   [[ $workspace =~ ^[0-9]+$ ]] || die "cannot determine a normal workspace for sign-in"
   setup_rules_dir=$(mktemp -d "$STATE/setup-rules.XXXXXX")
@@ -392,25 +394,14 @@ setup() {
     fi
     (( ${#sel[@]} )) || die "nothing selected"
     ordered=("${sel[@]}")
-    if (( ${#sel[@]} > 1 )); then
-      for i in "${!sel[@]}"; do echo "  $((i+1)). ${sel[$i]}"; done
-      if have_gum; then o=$(gum input --placeholder "tab order, e.g. 2 1 3 (enter keeps this order)"); else read -r -p "Tab order (e.g. 2 1 3, enter keeps): " o || return 1; fi
-      if [[ -n $o ]]; then ordered=(); for i in $o; do [[ $i =~ ^[0-9]+$ ]] && (( i>=1 && i<=${#sel[@]} )) && ordered+=("${sel[$((i-1))]}"); done; fi
-    fi
     for a in "${ordered[@]}"; do for i in "${!labels[@]}"; do [[ ${labels[$i]} == "$a" ]] && chosen+=("${found[$i]}"); done; done
   fi
   if (( ! yes )); then
-    echo "Pending tab order (saved after sign-in and the final setup choice):"
-    printf '  %s\n' "${ordered[@]}"
     setup_login_gate || return 1
     ordered=(); for f in "${chosen[@]}"; do ordered+=("$(trim "$(cut -d'|' -f2 <<<"$f")")"); done
   fi
-  local oo=last
-  if (( ! yes )); then
-    if have_gum; then oo=$(gum choose --header "Super+A opens…" "last" "first" "${ordered[@]}") || oo=last
-    else read -r -p "Super+A opens: last used agent, first tab, or an agent name [last]: " oo || return 1; fi
-    oo=$(trim "${oo:-last}"); [[ $oo == *"|"* || $oo == *"="* ]] && oo=last
-  fi
+  load_conf
+  local oo=${S[open_on]:-last}
   mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] && cp "$CONF" "$CONF.bak"
   {
     if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' | grep -vE '^[[:space:]]*open_on[[:space:]]*='; else sed '/|/d; /^# Agents (generated/d; /^[[:space:]]*open_on[[:space:]]*=/d' "$DATA/agents.conf.default"; fi

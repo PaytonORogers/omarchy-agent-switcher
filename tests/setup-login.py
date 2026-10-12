@@ -118,7 +118,7 @@ class SetupLogin(unittest.TestCase):
 
     def test_failed_native_check_does_not_enable(self):
         self.registry.write_text('claude | Claude Code | gui | bin:claude | class.claude | claude |\n')
-        self.program('claude', 'exit 1\n')
+        self.program('claude', 'echo \'{"authMethod":"none"}\'\nexit 1\n')
         code, output = self.run_setup('y\n\n\ns\n')
         self.assertNotEqual(code, 0, output)
         self.assertIn('still reports signed out', output)
@@ -141,7 +141,7 @@ class SetupLogin(unittest.TestCase):
     def test_skipping_one_agent_keeps_confirmed_agent(self):
         self.program('agent-b', 'exit 0\n')
         self.registry.write_text('a | A | gui | bin:agent-a | class.a | agent-a |\nb | B | gui | bin:agent-b | class.b | agent-b |\n')
-        code, output = self.run_setup('y\ny\n\nl\n\ny\ns\n\n')
+        code, output = self.run_setup('y\ny\nl\n\ny\ns\n')
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         self.assertNotIn('B ', self.conf.read_text())
@@ -154,7 +154,7 @@ class SetupLogin(unittest.TestCase):
 
     def test_login_becomes_verified_after_window_launch(self):
         self.registry.write_text('codex | Codex | gui | bin:codex | class.codex | codex |\n')
-        self.program('codex', 'if [ "$1" = login ]; then test -e "$FAKE/signed-in"; else touch "$FAKE/signed-in"; fi\n')
+        self.program('codex', 'if [ "$1" = login ]; then test -e "$FAKE/signed-in" || { echo "Not logged in"; exit 1; }; else touch "$FAKE/signed-in"; fi\n')
         proc, master = self.start('y\n\n')
         try:
             deadline = time.monotonic() + 10
