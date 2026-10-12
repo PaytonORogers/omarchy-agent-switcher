@@ -123,12 +123,13 @@ Item {
   // the strip is an on-demand layer surface and otherwise keeps keyboard focus.
   function hideSheet() { if (!sheet) return; sheet = false; if (opened) run(["refocus"]) }
   onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
-  function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
+  function toggleSheet() { if (sheet) hideSheet(); else { endArrange(); controlMode = ""; menuFor = ""; sheet = true; run(["refocus"]) } }
   function endArrange() { if (!arranging) return; arranging = false; actionQueue = actionQueue.filter(function(a) { return a[0] !== "arrange-keys" }); mutate(["arrange-keys", "off"]) }
   function dismissControls() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
   function close() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
   function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
   function controls(mode, name) { if (desktopBlocked) return; focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
+  function toggleControls(mode) { if (controlMode === mode) dismissControls(); else controls(mode, "") }
   function arrange(name) {
     if (desktopBlocked) return
     controlMode = ""; menuFor = ""; sheet = false
@@ -403,7 +404,7 @@ Item {
       Keys.onBacktabPressed: (e) => { if (root.controlMode !== "") e.accepted = false; else root.run(["prev"]) }
       Keys.onEscapePressed: { if (root.arranging || root.controlMode !== "") root.dismissControls(); else if (root.sheet) root.hideSheet(); else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
       Keys.onReturnPressed: { if (root.arranging) root.arrangeAction("activate") }
-      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.toggleSheet(); e.accepted = true } else if (root.controlMode === "" && !root.arranging && e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
+      Keys.onPressed: (e) => { if (root.controlMode === "" && !root.arranging && e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
 
       WheelHandler { onWheel: (e) => root.wheel(e.angleDelta.y) }
 
@@ -533,13 +534,13 @@ Item {
         glyph: "+"; label: "Add agent"
         background: root.bg; foreground: root.fg; accent: root.accent
         onHovered: (over) => root.buttonHint = over ? "Add agent" : ""
-        onClicked: root.controls("add", "")
+        onClicked: root.toggleControls("add")
       }
       HoverAction {
         glyph: "\ue615"; label: "Settings"; ring: false // Same glyph as Omarchy's Setup/settings menu.
         background: root.bg; foreground: root.fg; accent: root.accent
         onHovered: (over) => root.buttonHint = over ? "Settings" : ""
-        onClicked: root.controls("settings", "")
+        onClicked: root.toggleControls("settings")
       }
     }
 
@@ -556,7 +557,7 @@ Item {
       horizontalAlignment: Text.AlignHCenter
       elide: Text.ElideRight
       TextMetrics { id: hintMetrics; font: hintLine.font; text: hintLine.defaultText }
-      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) + " shortcuts" : "Settings → Keyboard shortcuts")
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.buttonHint !== "" ? root.buttonHint : root.hoverInfo !== "" ? root.hoverInfo : defaultText)
@@ -574,6 +575,7 @@ Item {
       onDismissed: root.dismissControls()
       onAddRequested: (name) => root.beginLogin(name)
       onArrangeRequested: (name) => root.arrange(name)
+      onShortcutsRequested: root.toggleSheet()
       onSettingRequested: (key, value) => root.mutate(["setting", key, value])
       onCommandRequested: (command, name) => {
         if (command === "left" || command === "right") root.mutate(["move", name, command])

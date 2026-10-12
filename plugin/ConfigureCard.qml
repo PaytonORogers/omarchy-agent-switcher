@@ -14,6 +14,7 @@ Rectangle {
   signal commandRequested(string command, string argument)
   signal settingRequested(string key, string value)
   signal arrangeRequested(string name)
+  signal shortcutsRequested()
   signal dismissed()
   width: 390
   height: content.implicitHeight + 28
@@ -23,7 +24,20 @@ Rectangle {
   Keys.onEscapePressed: dismissed()
   Accessible.role: Accessible.Dialog
   Accessible.name: title.text
-  function cycle(values, value) { return values[(values.indexOf(value) + 1) % values.length] }
+  function opacityValue() {
+    var parts = String(root.catalog.settings.opacity || "1").trim().split(/\s+/)
+    return parseFloat(parts[0]) + " " + parseFloat(parts[1] || parts[0])
+  }
+  function opacityChoices() {
+    var choices = [{label:"75%",value:"0.75 0.75"},{label:"85%",value:"0.85 0.85"},{label:"100%",value:"1 1"}]
+    var current = opacityValue()
+    if (!choices.some(function(c) { return c.value === current })) {
+      var parts = current.split(" ")
+      var active = Math.round(parseFloat(parts[0]) * 100), inactive = Math.round(parseFloat(parts[1]) * 100)
+      choices.unshift({label: active === inactive ? active + "%" : active + "% active / " + inactive + "% inactive", value: current})
+    }
+    return choices
+  }
 
   Column {
     id: content
@@ -72,21 +86,32 @@ Rectangle {
     }
     Column {
       visible: root.mode === "settings"
-      width: parent.width; spacing: 6
+      width: parent.width; spacing: 12
+      ControlButton { width: content.width; text: "Keyboard shortcuts"; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.shortcutsRequested() }
       ControlButton { width: content.width; text: "Arrange tabs · Super+Shift+←/→"; enabled: (root.catalog.enabled || []).length > 1; background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.arrangeRequested("") }
-      ControlButton {
-        width: content.width; text: "Open: " + (root.catalog.settings.open_on || "last")
+      SettingChoices {
+        width: content.width; title: "Opening target"; value: root.catalog.settings.open_on || "last"
+        choices: [{label:"Last used",value:"last"},{label:"First tab",value:"first"}].concat((root.catalog.enabled || []).map(function(n) { return {label:n,value:n} }))
         background: root.background; foreground: root.foreground; accent: root.accent
-        onClicked: root.settingRequested("open_on", root.cycle(["last", "first"].concat(root.catalog.enabled || []), root.catalog.settings.open_on || "last"))
+        onChosen: (value) => root.settingRequested("open_on", value)
       }
-      ControlButton { width: content.width; text: "Hints: " + (root.catalog.settings.show_hint ? "on" : "off"); background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.settingRequested("show_hint", root.catalog.settings.show_hint ? "false" : "true") }
-      ControlButton { width: content.width; text: "Usage display: " + (root.catalog.settings.usage_display || "fill"); background: root.background; foreground: root.foreground; accent: root.accent; onClicked: root.settingRequested("usage_display", root.cycle(["fill", "percent", "off"], root.catalog.settings.usage_display || "fill")) }
-      ControlButton {
-        width: content.width; text: "Window opacity: " + Math.round(parseFloat(root.catalog.settings.opacity || "1") * 100) + "%"
+      SettingChoices {
+        width: content.width; title: "Hints"; value: root.catalog.settings.show_hint ? "true" : "false"
+        choices: [{label:"On",value:"true"},{label:"Off",value:"false"}]
         background: root.background; foreground: root.foreground; accent: root.accent
-        onClicked: { var v = parseFloat(root.catalog.settings.opacity || "1"); var n = v < 0.85 ? "0.85 0.85" : v < 1 ? "1.0 1.0" : "0.75 0.75"; root.settingRequested("opacity", n) }
+        onChosen: (value) => root.settingRequested("show_hint", value)
       }
-      Text { width: parent.width; wrapMode: Text.WordWrap; text: "Changes save immediately. Click an option to cycle it. Colors follow your Omarchy theme."; color: root.foreground; font.family: Commons.Style.font.family; font.pixelSize: 11 }
+      SettingChoices {
+        width: content.width; title: "Usage display"; value: root.catalog.settings.usage_display || "fill"
+        choices: [{label:"Fill",value:"fill"},{label:"Percent",value:"percent"},{label:"Off",value:"off"}]
+        background: root.background; foreground: root.foreground; accent: root.accent
+        onChosen: (value) => root.settingRequested("usage_display", value)
+      }
+      SettingChoices {
+        width: content.width; title: "Agent window opacity"; value: root.opacityValue(); choices: root.opacityChoices()
+        background: root.background; foreground: root.foreground; accent: root.accent
+        onChosen: (value) => root.settingRequested("opacity", value)
+      }
     }
   }
 }

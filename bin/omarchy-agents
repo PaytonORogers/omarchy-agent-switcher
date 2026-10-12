@@ -862,7 +862,7 @@ shortcuts_json() { # every switcher key, generated from the live config
   [[ -n ${S[send_key]} ]] && l+=("$(pretty "${S[send_key]}")" "Send selected text to the agent")
   [[ -n ${S[shortcuts_key]} ]] && l+=("$(pretty "${S[shortcuts_key]}")" "This cheat sheet")
   l+=("Scroll on strip" "Switch agent" "Click tab" "Switch to agent" "Right-click tab" "Restart / Close menu" "Middle-click tab" "Close agent")
-  l+=("← → / Tab / 1-9" "Switch (strip focused)" "?" "Shortcuts (strip focused)" "Esc" "Close sheet / menu / panel")
+  l+=("← → / Tab / 1-9" "Switch (strip focused)" "Settings → Keyboard shortcuts" "This cheat sheet" "Esc" "Close sheet / menu / panel")
   [[ ${S[usage_display]} != off ]] && l+=("Usage %" "Refreshes every ${S[usage_refresh_min]} min (and on open); can lag or differ slightly from the provider")
   while IFS=$'	' read -r i r; do [[ -n $i ]] && l+=("$i" "Resize agent: $r (size is remembered)"); done < <(resize_binds)
   l+=("omarchy-agents reset-size" "Forget remembered agent sizes")

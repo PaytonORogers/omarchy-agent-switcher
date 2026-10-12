@@ -8,7 +8,7 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
-- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colors, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab or scroll over the strip. Hover over the strip to reveal a circled + and the Omarchy settings icon beside the tabs. Right-click a tab to move, close, restart, or disable it; middle-click closes its window. Settings → Arrange tabs uses ←/→ to select, Super+Shift+←/→ to move, Enter to open, and Esc to finish. Tabs show whether an agent is running, starting (…) or not started yet.
+- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colors, rounded corners and a hint line under the tabs. Settings → Keyboard shortcuts or a configured `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab or scroll over the strip. Hover over the strip to reveal a circled + and the Omarchy settings icon beside the tabs. Click either control again to close its panel, or use the panel's X. Right-click a tab to move, close, restart, or disable it; middle-click closes its window. Settings → Arrange tabs uses ←/→ to select, Super+Shift+←/→ to move, Enter to open, and Esc to finish. Tabs show whether an agent is running, starting (…) or not started yet.
 - **Directional switching.** Picking a tab to the right brings that agent in from the right while the old one leaves left, and the reverse for tabs on the left. The slide is ~250 ms and only applies to switches; your other window animations aren't touched.
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
@@ -60,7 +60,7 @@ omarchy-agents enable "Claude Code"   # add one back
 omarchy-agents setup                  # checklist of everything detected (X toggles)
 ```
 
-Configure agents in the strip. Settings lets you arrange tabs, choose which agent opens, show hints, change usage display, and cycle window opacity through 75%, 85%, and 100%. Changes save immediately. Reordering is contextual: normal Omarchy workspace/window shortcuts continue to work after leaving Arrange tabs. The strip never takes typing focus during ordinary opening.
+Configure agents in the strip. Settings groups the opening target, hints, usage display, and agent-window opacity under headings with directly selectable choices. It also opens Keyboard shortcuts and Arrange tabs. Changes save immediately. Reordering is contextual: normal Omarchy workspace/window shortcuts continue to work after leaving Arrange tabs. The strip never takes typing focus during ordinary opening.
 
 Add agent checks only the chosen agent. Supported successful checks add the tab without launching a window. Signed-out agents offer Sign in; agents without a supported check offer Already signed in or Open agent. Sign-in happens on a normal workspace, with a closable controller containing Check again and Cancel. Closing the agent window does not confirm sign-in. A tab is added only after verification or explicit confirmation. Failed window launches offer Retry. Cancellation preserves the existing config and restores parking rules.
 
@@ -163,7 +163,7 @@ keeps it centred, and anchors the strip under it. `omarchy-agents reset-size [na
 | Super+Alt+← / → | previous / next agent (only while open) |
 | per-agent `direct key` | open that agent, switch to it, or close it if it's already showing |
 | scroll on strip, or click it then ← → Tab 1-9 Esc | switch / close |
-| `?` on the focused strip, `shortcuts_key`, or `omarchy-agents shortcuts` | cheat sheet (Esc or click away closes) |
+| Settings → Keyboard shortcuts, `shortcuts_key`, or `omarchy-agents shortcuts` | cheat sheet (X, Esc, or click away closes) |
 
 The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only while the panel is open, and
 are restored on close (only if the Omarchy default was really there). If you pick keys that already do something else, `omarchy-agents rules` warns you.
