@@ -323,7 +323,7 @@ Item {
       anchors.top: strip.bottom
       anchors.topMargin: 4
       anchors.horizontalCenter: strip.horizontalCenter
-      text: root.hoverInfo !== "" ? root.hoverInfo : (root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+      text: root.hoverInfo !== "" ? root.hoverInfo : ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)

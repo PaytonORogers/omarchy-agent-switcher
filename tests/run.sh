@@ -249,6 +249,12 @@ echo '[]' > "$FAKE/clients.json"; : > "$FAKE/calls"; monitors 0
 $OA show Cursor >/dev/null 2>&1; sleep 0.3
 check "no window yet: launches via the registry command" "grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 
+echo "== QML syntax"
+QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
+if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do
+  check "$(basename "$f") has no QML syntax errors" "! \"$QL\" \"$f\" 2>&1 | grep -qiE 'syntax error|expected token|unexpected token'"; done
+else echo "  skip qmllint not installed"; fi
+
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
 echo "Q | class.q | env FOO=1 agent-a --flag 'two  spaces' |" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
