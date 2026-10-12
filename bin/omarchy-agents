@@ -43,7 +43,7 @@ find_prog() { PATH=$AGENT_PATH command -v "$1" 2>/dev/null; }
 # ---------- config ----------------------------------------------------------
 declare -A S=( [toggle_key]="SUPER + A" [accent]="" [accent_inactive]="" [width]=auto [height]=auto
   [top]=auto [max_width]=1600 [min_width]=640 [slide_ms]=250 [opacity]="0.82 0.75" [rounding]=14 [border]=2 [dim]=true [start_hidden]="" [show_hint]=""
-  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto [status_stale_min]=10 )
+  [hint]="" [prev_key]="SUPER + ALT + LEFT" [next_key]="SUPER + ALT + RIGHT" [override_slide_animation]=true [shortcuts_key]="" [open_on]=last [send_key]="" [click_through]=true [usage_display]=fill [usage_warn]=0.70 [usage_crit]=0.90 [usage_refresh_min]=10 [strip_edge]=auto [status_stale_min]=10 [sound]=default )
 names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); conf_warnings=()
 # Locate the program a launch line runs (skipping wrappers/flags); prints "index path" or fails.
 program_of() {
@@ -85,6 +85,7 @@ load_conf() {
       S[$key]=$v
     fi
   done < "$CONF"
+  case ${S[sound]} in default|chime|off) ;; *) conf_warnings+=("invalid sound '${S[sound]}' (default | chime | off)"); S[sound]=default ;; esac
   case ${S[strip_edge]} in auto|top|bottom) ;; *) conf_warnings+=("invalid strip_edge '${S[strip_edge]}' (auto | top | bottom)"); S[strip_edge]=auto ;; esac
   local kk; for kk in toggle_key prev_key next_key shortcuts_key send_key; do [[ -z ${S[$kk]} ]] || valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
   [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
@@ -724,12 +725,51 @@ doctor() {
 # One file per agent class: "<state> <epoch>". working | approval | error | done; idle = no file.
 STATUSD=$STATE/status
 status_prio() { case $1 in approval) echo 4 ;; error) echo 3 ;; done) echo 2 ;; working) echo 1 ;; *) echo 0 ;; esac; }
+# ---- notification sound on approval / error / done ----
+dnd_on() { # Omarchy shell's do-not-disturb (persisted by its notifications service), or mako's DND mode
+  local f=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/notifications.json
+  [[ $(jq -r '.dnd // false' "$f" 2>/dev/null) == true ]] && return 0
+  command -v makoctl >/dev/null 2>&1 && makoctl mode 2>/dev/null | grep -qx 'do-not-disturb' && return 0
+  return 1
+}
+agent_in_view() { # the panel is open and this agent's window has focus: you're already looking at it
+  [[ $(hyprctl -j monitors 2>/dev/null | jq -r 'any(.[]; .specialWorkspace.name == "special:agents")') == true ]] || return 1
+  [[ $(hyprctl -j activewindow 2>/dev/null | jq -r '.class // ""') == "$1" ]]
+}
+sound_play() { # sound_play <class> <state>: decides and plays (in the background); every decision is logged
+  local c=$1 st=$2 mode=${S[sound]:-default} now last f id
+  case $st in approval|error|done) ;; *) return 0 ;; esac
+  [[ $mode == off ]] && return 0
+  if dnd_on; then log "sound: skip $c $st (do not disturb)"; return 0; fi
+  if agent_in_view "$c"; then log "sound: skip $c $st (tab in view)"; return 0; fi
+  now=$(date +%s%3N); last=$(cat "$STATE/sound-last" 2>/dev/null || echo 0)
+  if (( now - ${last:-0} < 3000 )); then log "sound: skip $c $st (rate limit)"; return 0; fi
+  echo "$now" > "$STATE/sound-last"
+  local -a cmd=()
+  if [[ $mode == chime ]]; then
+    f=$DATA/sounds/chime-$st.wav
+    if command -v pw-play >/dev/null; then cmd=(pw-play "$f"); elif command -v paplay >/dev/null; then cmd=(paplay "$f"); fi
+  else
+    [[ $st == done ]] && id=complete || id=message-new-instant
+    f=/usr/share/sounds/freedesktop/stereo/$id.oga
+    if command -v canberra-gtk-play >/dev/null; then cmd=(canberra-gtk-play -i "$id" -d omarchy-agent-switcher)
+    elif command -v pw-play >/dev/null && [[ -f $f ]]; then cmd=(pw-play "$f")
+    elif command -v paplay >/dev/null && [[ -f $f ]]; then cmd=(paplay "$f"); fi
+  fi
+  [[ -n ${OA_SOUND_PLAYER:-} ]] && cmd=("$OA_SOUND_PLAYER" "${cmd[@]}")   # tests: record instead of play
+  (( ${#cmd[@]} )) || { log "sound: no player for $mode $st"; return 0; }
+  log "sound: play $c $st: ${cmd[*]}"
+  ( timeout 5 "${cmd[@]}" >/dev/null 2>&1 & ) 9>&- 2>/dev/null
+  return 0
+}
 status_set() { # status_set <class> <state>
-  local c=$1 st=$2
+  local c=$1 st=$2 prev
   valid_class "$c" || return 1
+  prev=$(status_of "$c")
   case $st in working|approval|error|done) mkdir -p "$STATUSD"; echo "$st $(date +%s)" > "$STATUSD/$c.tmp" && mv "$STATUSD/$c.tmp" "$STATUSD/$c" ;;
     idle) rm -f "$STATUSD/$c" ;; *) return 1 ;; esac
   log "status $c $st"
+  [[ $st != "$prev" ]] && sound_play "$c" "$st"
   ( timeout 2 omarchy-shell -q agentswitcher status >/dev/null 2>&1 & ) 9>&- 2>/dev/null
   return 0
 }

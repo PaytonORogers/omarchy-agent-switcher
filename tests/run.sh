@@ -317,6 +317,26 @@ check "strip grace period starts only on open or tab switch" "grep -q 'if (!open
 setup_world; monitors 1; clients "class.a:0xa1:243"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/acted"
 $OA show A >/dev/null 2>&1; check "re-showing the active tab (refresh) doesn't mark our own action" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/acted ]]"
 
+echo "== status sound"
+setup_world; SL=$T/sound.log; printf '#!/bin/sh\necho "$*" >> %s\n' "$SL" > "$T/rec"; chmod +x "$T/rec"; export OA_SOUND_PLAYER=$T/rec
+snd() { sleep 0.3; cat "$SL" 2>/dev/null; }; sreset() { : > "$SL"; rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/sound-last"; }
+sreset; $OA status-set A working; check "working is silent" "[[ -z \$(snd) ]]"
+sreset; $OA status-set A approval; check "approval plays message-new-instant (default)" "snd | grep -q 'message-new-instant'"
+sreset; $OA status-set A approval; check "same state again is silent" "[[ -z \$(snd) ]]"
+sreset; $OA status-set B done; check "done plays complete" "snd | grep -q 'complete'"
+$OA status-set C error; check "burst within 3s is rate-limited" "[[ \$(snd | wc -l) == 1 ]]"
+sreset; $OA status-set C idle; echo 'sound = chime' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA status-set C error
+check "chime mode plays the bundled error chime" "snd | grep -q 'sounds/chime-error.wav'"
+check "bundled chimes exist and are licensed" "[[ -s $ROOT/share/sounds/chime-approval.wav && -s $ROOT/share/sounds/chime-done.wav && -s $ROOT/share/sounds/chime-error.wav ]] && grep -q CC0 $ROOT/share/sounds/LICENSE"
+sreset; $OA status-set C idle; sed -i 's/^sound = chime/sound = off/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; $OA status-set C error; check "sound = off is silent" "[[ -z \$(snd) ]]"
+sed -i '/^sound = /d' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+sreset; $OA status-set C idle; mkdir -p "$XDG_STATE_HOME/omarchy"; echo '{"version":3,"dnd":true}' > "$XDG_STATE_HOME/omarchy/notifications.json"
+$OA status-set C error; check "do-not-disturb is respected" "[[ -z \$(snd) ]]"; rm -f "$XDG_STATE_HOME/omarchy/notifications.json"
+sreset; $OA status-set A idle; monitors 1; echo '{"class":"class.a"}' > "$FAKE/activewindow.json"; $OA status-set A done
+check "no sound when that tab is open and focused" "[[ -z \$(snd) ]]"
+sreset; $OA status-set B idle; $OA status-set B done; check "other agent's sound still plays while A is in view" "snd | grep -q complete"
+unset OA_SOUND_PLAYER
+
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
 if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do

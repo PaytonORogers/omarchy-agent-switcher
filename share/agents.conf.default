@@ -23,6 +23,7 @@ usage_display = fill        # usage meter on tabs: fill | percent | off
 usage_warn = 0.70
 usage_crit = 0.90
 usage_refresh_min = 10
+sound = default             # status sound on approval/error/done: default (theme sound) | chime (bundled) | off
 # shortcuts_key = SUPER + SLASH   # optional global bind for the cheat sheet (default unbound)
 # start_hidden = grok-bot  # comma list of window classes to launch hidden at login
 # ---- agents: name | window class | launch | direct key (optional) | icon (optional) | usage provider (optional) ----
