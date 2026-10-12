@@ -535,11 +535,58 @@ shortcuts_json() { # every switcher key, generated from the live config
   l+=("Selected text" "Select it, then press send_key (omarchy-agents send)")
   jq -cn '[$ARGS.positional | range(0; length; 2) as $j | {keys: .[$j], action: .[$j+1]}]' --args "${l[@]}"
 }
+# True when hicolor or pixmaps has this freedesktop icon name.
+theme_has_icon() {
+  local n=$1 base d size
+  [[ $n =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
+  local -a bases=("${XDG_DATA_HOME:-$HOME/.local/share}")
+  local IFS=:
+  for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do bases+=("$d"); done
+  IFS=$' \t\n'
+  for base in "${bases[@]}"; do
+    [[ -f $base/pixmaps/$n.png || -f $base/pixmaps/$n.svg || -f $base/pixmaps/$n.xpm ]] && return 0
+    for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512 scalable; do
+      [[ -f $base/icons/hicolor/$size/apps/$n.png || -f $base/icons/hicolor/$size/apps/$n.svg ]] && return 0
+    done
+  done
+  return 1
+}
+# Icon= from <prog>.desktop, searching XDG application dirs. Empty if none.
+desktop_icon() {
+  local prog=$1 dir f icon
+  [[ $prog =~ ^[A-Za-z0-9._+-]+$ ]] || return 0
+  local IFS=:
+  local -a dirs=("${XDG_DATA_HOME:-$HOME/.local/share}")
+  for dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do dirs+=("$dir"); done
+  IFS=$' \t\n'
+  for dir in "${dirs[@]}"; do
+    f=$dir/applications/$prog.desktop
+    [[ -f $f ]] || continue
+    icon=$(awk -F= 'BEGIN{IGNORECASE=1} $1 ~ /^[ \t]*Icon[ \t]*$/ { gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit }' "$f")
+    if [[ -n $icon ]]; then printf '%s\n' "$icon"; return 0; fi
+  done
+}
+# Tab image URL. A name that is not bundled and not in the icon theme falls back
+# to the launch program's desktop Icon= (Cursor's theme name is co.anysphere.cursor,
+# not "cursor"). Absolute paths and bundled svgs win.
+tab_icon() {
+  local ic=$1 cmd=$2 pi prog alt
+  [[ -z $ic ]] && return 0
+  if [[ $ic == /* ]]; then printf 'file://%s\n' "$ic"; return 0; fi
+  if [[ -f $DATA/icons/$ic.svg ]]; then printf 'file://%s\n' "$DATA/icons/$ic.svg"; return 0; fi
+  if [[ $ic =~ ^[A-Za-z0-9._+-]+$ ]] && ! theme_has_icon "$ic"; then
+    pi=$(program_of "$cmd") || true
+    prog=${pi#* }; prog=${prog##*/}
+    alt=$(desktop_icon "$prog")
+    if [[ $alt == /* && -f $alt ]]; then printf 'file://%s\n' "$alt"; return 0; fi
+    if [[ -n $alt ]] && theme_has_icon "$alt"; then ic=$alt; fi
+  fi
+  printf 'image://icon/%s\n' "$ic"
+}
 payload() { # one jq call: tabs (name, icon, running, starting) + strip settings + sequence number
   local i ic st; local -a args=()
   for i in "${!names[@]}"; do
-    ic=${icons[$i]}; if [[ -z $ic ]]; then :; elif [[ $ic == /* ]]; then ic="file://$ic"
-    elif [[ -f $DATA/icons/$ic.svg ]]; then ic="file://$DATA/icons/$ic.svg"; else ic="image://icon/$ic"; fi
+    ic=$(tab_icon "${icons[$i]}" "${cmds[$i]}")
     st=stopped; [[ -n ${ADDR[${classes[$i]}]:-} ]] && st=running; [[ -f $STATE/launch.${classes[$i]} ]] && st=starting
     args+=("${names[$i]}" "$ic" "$st" "$(provider_of "$i")")
   done

@@ -143,6 +143,31 @@ $OA show A >/dev/null
 check "running cursor is not launched again" "grep -q 'already running' $XDG_STATE_HOME/omarchy-agent-switcher/log && ! grep -q 'launch A: $T/agents/cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 kill "$hold" 2>/dev/null || true; wait "$hold" 2>/dev/null || true; rm -rf "$bindir"
 
+echo "== cursor icon"
+setup_world
+sed -i 's/^A | class.a | agent-a | SUPER + SHIFT + A |/A | class.a | cursor | SUPER + SHIFT + A | cursor/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/cursor"; chmod +x "$T/agents/cursor"
+mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/icons/hicolor/48x48/apps"
+printf '[Desktop Entry]\nName=Cursor\nExec=cursor\nIcon=co.anysphere.cursor\nType=Application\n' > "$XDG_DATA_HOME/applications/cursor.desktop"
+: > "$XDG_DATA_HOME/icons/hicolor/48x48/apps/co.anysphere.cursor.png"
+clients "class.a:0xa1:243"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "icon name cursor falls back to the desktop Icon=" "grep summon \$FAKE/shell | tail -1 | grep -q 'image://icon/co.anysphere.cursor'"
+: > "$XDG_DATA_HOME/icons/hicolor/48x48/apps/mybrand.png"
+sed -i 's/| cursor$/| mybrand/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "an installed theme name is kept" "grep summon \$FAKE/shell | tail -1 | grep -q 'image://icon/mybrand' && ! grep summon \$FAKE/shell | tail -1 | grep -q co.anysphere.cursor"
+mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher/icons"
+cp "$ROOT/share/icons/grok.svg" "$XDG_DATA_HOME/omarchy-agent-switcher/icons/grok.svg"
+sed -i 's/| mybrand$/| grok/' "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "bundled svg wins over the desktop icon" "grep summon \$FAKE/shell | tail -1 | grep -q 'file://.*/icons/grok.svg'"
+printf 'x' > "$T/cursor.png"
+sed -i "s#| grok\$#| $T/cursor.png#" "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+: > "$FAKE/shell"; $OA show A >/dev/null 2>&1; sleep 0.5
+check "absolute icon path is a file URL" "grep summon \$FAKE/shell | tail -1 | grep -q 'file://$T/cursor.png'"
+check "registry lists Cursor's real icon name" "grep -q 'uwsm-app -- cursor[[:space:]]*| co\\.anysphere\\.cursor' $ROOT/share/registry.conf"
+
 echo "== resolve_cmd keeps arguments verbatim"
 setup_world
 echo "Q | class.q | env FOO=1 agent-a --flag 'two  spaces' |" >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"

@@ -93,7 +93,7 @@ One setting per line. Window classes may only contain letters, digits, `.`, `_` 
 
 After editing, run `omarchy-agents rules` to regenerate the Hyprland include and reload.
 
-**Icons** can be a bundled name (`grok`, `grok-bot`, `claude`, `codex`, `hermes`), an icon-theme name, or an absolute path.
+**Icons** can be a bundled name (`grok`, `grok-bot`, `claude`, `codex`, `hermes`), an icon-theme name, or an absolute path. Cursor's theme name is `co.anysphere.cursor` (the `Icon=` in its desktop file), not `cursor`. A name that is neither bundled nor installed in the icon theme is replaced by that desktop file's icon when the icon is installed.
 
 **Terminal agents:** use an absolute path or `$HOME/...` for the binary. Apps launched through uwsm don't see your shell's PATH.
 
