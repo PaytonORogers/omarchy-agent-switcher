@@ -113,8 +113,8 @@ Item {
   onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
   function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
   function endArrange() { if (!arranging) return; arranging = false; actionQueue = actionQueue.filter(function(a) { return a[0] !== "arrange-keys" }); mutate(["arrange-keys", "off"]) }
-  function dismissControls() { controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
-  function close() { endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
+  function dismissControls() { if (loginProc.running && !loginVisible) loginProc.signal(15); controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
+  function close() { if (loginProc.running && !loginVisible) loginProc.signal(15); endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
   function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
   function controls(mode, name) { focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
   function arrange(name) {
@@ -136,15 +136,16 @@ Item {
   }
   function mutate(args) { actionQueue = actionQueue.concat([args]); startAction() }
   function startAction() { if (actionProc.running || !actionQueue.length) return; var a = actionQueue[0]; actionQueue = actionQueue.slice(1); actionProc.command = [bin].concat(a); actionProc.running = true }
-  function beginLogin(name) {
+  function beginLogin(name, action) {
     if (loginProc.running) return
+    pendingLoginAction = action || ""
     loginAgent = name; loginResult = {state: "checking", name: name}; controlError = "Checking sign-in…"
     loginProc.command = [Quickshell.env("HOME") + "/.local/share/omarchy-agent-switcher/configure-signin", bin, name]
     loginProc.running = true
   }
   function loginAction(action) {
     if (action === "cancel") { loginVisible = false; if (loginProc.running) loginProc.signal(15); return }
-    if (!loginProc.running) { pendingLoginAction = action; beginLogin(loginAgent); return }
+    if (!loginProc.running) { beginLogin(loginAgent, action); return }
     loginProc.write(action + "\n")
   }
   Process {
@@ -260,6 +261,7 @@ Item {
     function status(): string { if (root.opened) root.run(["show", root.active]); return "ok" }   // an agent status changed
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
+    function configure(mode: string, name: string): string { if (mode === "arrange") root.arrange(name); else if (["add", "settings", "tab"].indexOf(mode) >= 0) root.controls(mode, name); else return "unknown mode"; return "ok" }
     function arrangeAction(action: string): string { root.arrangeAction(action); return "ok" }
     function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
   }
@@ -356,11 +358,11 @@ Item {
 
       Keys.onLeftPressed: { if (root.arranging) root.arrangeAction("select-left"); else root.run(["prev"]) }
       Keys.onRightPressed: { if (root.arranging) root.arrangeAction("select-right"); else root.run(["next"]) }
-      Keys.onTabPressed: root.run(["next"])
-      Keys.onBacktabPressed: root.run(["prev"])
+      Keys.onTabPressed: (e) => { if (root.controlMode !== "") e.accepted = false; else root.run(["next"]) }
+      Keys.onBacktabPressed: (e) => { if (root.controlMode !== "") e.accepted = false; else root.run(["prev"]) }
       Keys.onEscapePressed: { if (root.arranging || root.controlMode !== "") root.dismissControls(); else if (root.sheet) root.hideSheet(); else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
       Keys.onReturnPressed: { if (root.arranging) root.arrangeAction("activate") }
-      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.toggleSheet(); e.accepted = true } else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
+      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.toggleSheet(); e.accepted = true } else if (root.controlMode === "" && !root.arranging && e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
 
       WheelHandler { onWheel: (e) => root.wheel(e.angleDelta.y) }
 

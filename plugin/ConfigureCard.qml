@@ -20,6 +20,7 @@ Rectangle {
   radius: 14
   color: background
   border.width: 2; border.color: accent
+  Keys.onEscapePressed: dismissed()
   Accessible.role: Accessible.Dialog
   Accessible.name: title.text
   function cycle(values, value) { return values[(values.indexOf(value) + 1) % values.length] }
