@@ -254,6 +254,13 @@ check "strip grace period starts only on open or tab switch" "grep -q 'if (!open
 setup_world; monitors 1; clients "class.a:0xa1:243"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; rm -f "$XDG_STATE_HOME/omarchy-agent-switcher/acted"
 $OA show A >/dev/null 2>&1; check "re-showing the active tab (refresh) doesn't mark our own action" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/acted ]]"
 
+echo "== click_through doesn't use modal dim_around"
+setup_world; monitors 0; clients "class.a:0xa1:243"; : > "$FAKE/calls"; $OA show A >/dev/null 2>&1
+check "click_through: agent gets dim_around 0 (no full-monitor hit box)" "evals | grep -q \"prop = 'dim_around', value = '0'\" && ! evals | grep -q \"dim_around', value = '1'\""
+$OA rules >/dev/null 2>&1; check "rules dim via dim_special and restore it" "grep -q 'dim_special = math.max' $R && grep -q 'dim_special = s.ds' $R && grep -q 'agent_switcher.dim = true' $R"
+echo 'click_through = false' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; : > "$FAKE/calls"; $OA hide >/dev/null 2>&1; $OA show A >/dev/null 2>&1
+check "click_through = false keeps modal dim_around" "evals | grep -q \"dim_around', value = '1'\""
+
 echo "== QML syntax"
 QL=$(command -v qmllint || echo /usr/lib/qt6/bin/qmllint)
 if [[ -x $QL ]]; then for f in "$ROOT"/plugin/*.qml; do

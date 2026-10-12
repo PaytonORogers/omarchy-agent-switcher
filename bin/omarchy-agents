@@ -135,6 +135,7 @@ gen_rules() {
     # that was really there when rules were generated is put back on close.
     echo "agent_switcher = agent_switcher or {}"
     echo "agent_switcher.click_through = $([[ ${S[click_through]} == false ]] && echo false || echo true)"
+    echo "agent_switcher.dim = $([[ ${S[dim]} == true ]] && echo true || echo false)"
     echo "local cycle = {"
     local k desc dir restore
     for dir in prev next; do
@@ -167,6 +168,11 @@ function agent_switcher.on()
       local fm, sf = hl.get_config("input.follow_mouse"), hl.get_config("input.special_fallthrough")
       agent_switcher.saved = { fm = fm, sf = sf }
       hl.config({ input = { special_fallthrough = true, follow_mouse = (fm == 1) and 2 or fm } })
+      if agent_switcher.dim then  -- dim the rest of the screen without dim_around's input grab
+        local ds = hl.get_config("decoration.dim_special")
+        agent_switcher.saved.ds = ds
+        hl.config({ decoration = { dim_special = math.max(ds or 0, 0.4) } })
+      end
     end)
   end
 end
@@ -177,7 +183,8 @@ function agent_switcher.off()
     if c.restore then hl.bind(c.key, c.restore[2](), { description = c.restore[1] }) end
   end
   local s = agent_switcher.saved
-  if s then agent_switcher.saved = nil; pcall(function() hl.config({ input = { special_fallthrough = s.sf, follow_mouse = s.fm } }) end) end
+  if s then agent_switcher.saved = nil; pcall(function() hl.config({ input = { special_fallthrough = s.sf, follow_mouse = s.fm } }) end)
+    if s.ds ~= nil then pcall(function() hl.config({ decoration = { dim_special = s.ds } }) end) end end
 end
 LUA
   } > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
@@ -457,7 +464,7 @@ await_window() { # background: when agent <idx> maps, focus + dim it if still th
     l="pcall(function() hl.dispatch(hl.dsp.window.resize({ window = 'address:$a', x = $gw, y = $gh })) end) pcall(function() hl.dispatch(hl.dsp.window.move({ window = 'address:$a', x = $gx, y = $gy })) end) "
     l+="pcall(function() hl.dispatch(hl.dsp.focus({ window = 'address:$a' })) end) "
     [[ $p =~ ^-?[0-9]+,\ -?[0-9]+$ ]] && l+="pcall(function() hl.dispatch(hl.dsp.cursor.move({ x = ${p%%,*}, y = ${p##*, } })) end) "
-    [[ $dim == true ]] && l+="pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) end) "
+    dim_modal && l+="pcall(function() hl.dispatch(hl.dsp.window.set_prop({ window = 'address:$a', prop = 'dim_around', value = '1' })) end) "
     hyprctl eval "$l" >/dev/null 2>&1 ) 9>&- >/dev/null 2>&1 &
 }
 ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in background
@@ -468,7 +475,11 @@ ensure() { # ensure <idx>: 0 = window exists (fixes queued), 2 = launching in ba
   if (( ${WW[$c]:-0} != TW[$c] || ${WH[$c]:-0} != TH[$c] )); then q "hl.dsp.window.resize({ window = 'address:$a', x = ${TW[$c]}, y = ${TH[$c]} })"; WW[$c]=${TW[$c]}; WH[$c]=${TH[$c]}; fi
   return 0
 }
-dim_on() { [[ ${S[dim]} == true ]] && prop "$1" dim_around 1; return 0; }
+# dim_around makes Hyprland treat the WHOLE monitor as the window's hit box (modal), so every click
+# outside the agent lands on it (with a resize cursor). With click_through we dim via
+# decoration:dim_special instead (set in agent_switcher.on), which leaves input alone.
+dim_modal() { [[ ${S[dim]} == true && ${S[click_through]} == false ]]; }
+dim_on() { if dim_modal; then prop "$1" dim_around 1; else prop "$1" dim_around 0; fi; return 0; }
 show_hint() { local v=${S[show_hint]:-true}; [[ $v == true || $v == on || $v == 1 ]]; }
 # ---------- usage meter (collectors vendored from auxxed/omarchy-agents, MIT) --
 USAGE_DIR=$HOME/.local/state/omarchy/agents/usage
