@@ -160,7 +160,7 @@ Item {
     anchors { top: true }
     // The cheat sheet sits above the strip, so the window grows upward.
     margins.top: root.edge === "top" ? root.stripTop : Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
-    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, hintLine.visible ? hintLine.implicitWidth + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
+    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, hintLine.visible ? hintMetrics.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
     implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + ((menu.visible || hintLine.visible) ? 20 : 0)
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -286,10 +286,10 @@ Item {
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
               }
-              // Percent: its space is always reserved so hovering never resizes the tab/strip/window.
+              // Percent only in "percent" mode; hover detail goes in the fixed-width hint line,
+              // so hovering never changes any size.
               Text {
-                visible: tab.hasUsage
-                opacity: (root.usageDisplay === "percent" || ma.containsMouse) ? 1 : 0
+                visible: tab.hasUsage && root.usageDisplay === "percent"
                 anchors.verticalCenter: parent.verticalCenter
                 width: pctMetrics.width
                 horizontalAlignment: Text.AlignRight
@@ -304,7 +304,7 @@ Item {
               anchors.fill: parent
               hoverEnabled: true
               onContainsMouseChanged: root.hoverInfo = (containsMouse && tab.hasUsage)
-                ? tab.modelData.name + ": " + (tab.modelData.usageLabel || Math.round(tab.usage * 100) + "%") + "  ·  refreshes periodically; can lag or differ slightly from the provider" : ""
+                ? tab.modelData.name + ": " + (tab.modelData.usageLabel || Math.round(tab.usage * 100) + "%") + "  ·  can lag or differ slightly from the provider" : ""
               acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
               onClicked: (m) => {
                 strip.forceActiveFocus()
@@ -321,13 +321,20 @@ Item {
     // Hint line under the tabs (show_hint / omarchy-agents hint on|off); the right-click menu replaces it.
     Text {
       id: hintLine
-      visible: (root.hint || root.hoverInfo !== "") && root.menuFor === ""
+      // Fixed size: the line's width comes from the default hint text (never from the hover text),
+      // and it is always reserved, so hovering can't resize/re-centre the strip window.
+      visible: root.hint && root.menuFor === ""
       anchors.top: strip.bottom
       anchors.topMargin: 4
       anchors.horizontalCenter: strip.horizontalCenter
-      text: root.hoverInfo !== "" ? root.hoverInfo : ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+      width: Math.max(hintMetrics.width, strip.width - 16)
+      horizontalAlignment: Text.AlignHCenter
+      elide: Text.ElideRight
+      TextMetrics { id: hintMetrics; font: hintLine.font; text: hintLine.defaultText }
+      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
+      text: root.hoverInfo !== "" ? root.hoverInfo : defaultText
       color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
       font.family: Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
