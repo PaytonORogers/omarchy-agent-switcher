@@ -146,8 +146,18 @@ gen_rules() {
       fi
       echo "  { key = \"$(lq "$k")\", cmd = \"$(lq "$SELF") $dir\", desc = \"$([[ $dir == prev ]] && echo Previous || echo Next) agent\", restore = $restore },"
     done
+    echo "}"
+    # Esc closes the cheat sheet. The strip never takes the keyboard, so this is a global
+    # bind that exists only while the sheet is up (skipped if Escape is already bound).
+    if [[ -z $(bind_desc "Escape") || $(bind_desc "Escape") == "Close agent switcher shortcuts" ]]; then
+      echo "agent_switcher.sheet_esc = \"$(lq "$SELF") sheet-close\""
+    else echo "agent_switcher.sheet_esc = nil  -- Escape is already bound"; fi
     cat <<'LUA'
-}
+function agent_switcher.sheet_keys(on)
+  if not agent_switcher.sheet_esc then return end
+  pcall(hl.unbind, "Escape")
+  if on then hl.bind("Escape", hl.dsp.exec_cmd(agent_switcher.sheet_esc), { description = "Close agent switcher shortcuts" }) end
+end
 -- While open: clicks on visible windows outside the panel reach them (special_fallthrough;
 -- our agents are floating), and focus follows clicks only (follow_mouse 2) so merely moving
 -- the pointer off the panel doesn't close it. The user's values are restored on close.
@@ -162,6 +172,7 @@ function agent_switcher.on()
   end
 end
 function agent_switcher.off()
+  pcall(agent_switcher.sheet_keys, false)
   for _, c in ipairs(cycle) do
     pcall(hl.unbind, c.key)
     if c.restore then hl.bind(c.key, c.restore[2](), { description = c.restore[1] }) end
@@ -731,6 +742,10 @@ case $cmd in
           fi
           visible && strip_show "$(idx_of "$last")" ;;
   hide)   hide_all ;;
+  sheet-keys) # the strip reports the sheet opening/closing: add/remove the Esc bind
+          [[ ${2:-} == on ]] && on=true || on=false
+          hyprctl eval "pcall(function() if agent_switcher and agent_switcher.sheet_keys then agent_switcher.sheet_keys($on) end end)" >/dev/null 2>&1 ;;
+  sheet-close) timeout 2 omarchy-shell -q agentswitcher closeSheet >/dev/null 2>&1 ;;
   evict)  # a window just mapped on special:agents: anything that isn't a configured agent
           # (web app, browser, dialog from the launcher) goes to the regular workspace, panel hides
           w=${2:-}; is_addr "$w" || exit 0

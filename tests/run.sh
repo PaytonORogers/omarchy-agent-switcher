@@ -189,6 +189,17 @@ check "window on a regular workspace is left alone" "! grep -q . $FAKE/calls"
 check "unknown or bad address does nothing" "! grep -q . $FAKE/calls"
 check "plugin evicts on openwindow even when closed, no browser list" "grep -q 'run(\\[\"evict\"' $ROOT/plugin/Switcher.qml && ! grep -qiE 'chrom|firefox|zen' $ROOT/plugin/Switcher.qml"
 
+echo "== Esc closes the cheat sheet"
+setup_world; monitors 1; clients "class.a:0xa1:243"; $OA rules >/dev/null 2>&1; R=$XDG_CONFIG_HOME/hypr/agent-switcher.lua
+check "Esc bind only through sheet_keys, removed on off()" "grep -q 'sheet-close' $R && grep -q 'function agent_switcher.sheet_keys' $R && grep -q 'pcall(agent_switcher.sheet_keys, false)' $R"
+check "no bare Escape bind at load time" "! grep -qE '^(o\\.bind|ab)\\(\"Escape' $R"
+: > "$FAKE/calls"; $OA sheet-keys on; check "sheet-keys on adds the bind" "evals | grep -q 'sheet_keys(true)'"
+: > "$FAKE/calls"; $OA sheet-keys off; check "sheet-keys off removes it" "evals | grep -q 'sheet_keys(false)'"
+: > "$FAKE/shell"; $OA sheet-close; check "sheet-close asks the strip to close the sheet" "grep -qx 'agentswitcher closeSheet' $FAKE/shell"
+echo '[{"modmask":0,"key":"Escape","submap":"","dispatcher":"exec","arg":"x","description":"Mine"}]' > "$FAKE/binds.json"
+$OA rules >/dev/null 2>&1; check "existing Escape bind is left alone" "grep -q 'sheet_esc = nil' $R"
+rm -f "$FAKE/binds.json"
+
 echo "== strip edge"
 setup_world; monitors 0; clients "class.a:0xa1:243"
 G=$($OA geometry); check "no shell.json -> bottom edge" "[[ \$G == *edge=bottom* ]]"

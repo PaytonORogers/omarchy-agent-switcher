@@ -64,6 +64,7 @@ Item {
   // Closing the sheet on purpose (key, click, Esc) hands the keyboard back to the agent:
   // the strip is an on-demand layer surface and otherwise keeps keyboard focus.
   function hideSheet() { if (!sheet) return; sheet = false; if (opened) run(["refocus"]) }
+  onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
   function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
   function close() { opened = false; menuFor = ""; sheet = false }
   // One process per call, so quick clicks/scrolls are never dropped.
@@ -119,6 +120,7 @@ Item {
     function hide(): string { root.close(); return "ok" }
     function refresh(): string { if (root.opened) root.run(["show", root.active]); return "ok" }
     function state(): string { return root.opened ? "open:" + root.active : "closed" }
+    function closeSheet(): string { root.hideSheet(); return "ok" }
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
     function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
