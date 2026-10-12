@@ -32,8 +32,18 @@ Item {
   property real usageCrit: 0.9
   property real usageRefreshMin: 10
 
-  readonly property color fg: Color.foreground
+  readonly property color fg: readableText(Color.background, Color.foreground)
   readonly property color bg: Color.background
+
+  function luminance(c) {
+    function linear(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+  }
+  function readableText(background, preferred) {
+    var b = luminance(background), f = luminance(preferred)
+    if ((Math.max(b, f) + 0.05) / (Math.min(b, f) + 0.05) >= 4.5) return preferred
+    return b > 0.179 ? "#111111" : "#FFFFFF"
+  }
 
   function open(payloadJson) {
     try {
@@ -218,7 +228,7 @@ Item {
       width: row.implicitWidth + 16
       height: 44
       radius: 22
-      color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.78)
+      color: root.bg
       border.width: 2
       border.color: root.accent
       focus: true
@@ -249,8 +259,8 @@ Item {
             width: content.implicitWidth + 30
             height: 32
             radius: 16
-            opacity: st === "stopped" && !sel ? 0.6 : 1.0
-            color: sel ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.85)
+            opacity: 1.0
+            color: sel ? root.accent
                        : (ma.containsMouse ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22) : "transparent")
             // keyboard focus ring on the active tab
             border.width: (sel && strip.activeFocus) ? 2 : ((!sel && ma.containsMouse) ? 1 : 0)
@@ -301,7 +311,7 @@ Item {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
-                color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
+                color: tab.sel ? root.readableText(root.accent, root.fg) : root.fg
                 font.family: Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
@@ -314,7 +324,7 @@ Item {
                 width: pctMetrics.width
                 horizontalAlignment: Text.AlignRight
                 text: Math.round(tab.usage * 100) + "%"
-                color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
+                color: tab.sel ? root.readableText(root.accent, root.fg) : root.fg
                 font.family: Style.font.family; font.pixelSize: 12
                 TextMetrics { id: pctMetrics; font.family: Style.font.family; font.pixelSize: 12; text: "100%" }
               }
@@ -355,7 +365,7 @@ Item {
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
       text: root.hoverInfo !== "" ? root.hoverInfo : defaultText
-      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
+      color: root.fg
       font.family: Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
     }
