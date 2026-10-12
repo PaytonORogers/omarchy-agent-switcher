@@ -8,12 +8,12 @@ Grok Build, Claude Code, Codex, or any other GUI or terminal agent, sliding side
 
 ## Features
 - **One shared drop-down.** Every agent lives in one Hyprland special workspace (`special:agents`). Opening and closing slide up from the bottom.
-- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab, scroll over the strip, or click it and use ← → / Tab / 1-9 / Esc. Right-click a tab for Restart / Close; middle-click closes. Tabs show whether an agent is running, starting (…) or not started yet.
+- **Tab strip.** It's a native Omarchy shell (quickshell) plugin with icons, theme colours, rounded corners and a hint line under the tabs; `?` on the strip or `shortcuts_key` (e.g. Super+/) opens a cheat sheet of every switcher key, built from your config. Click a tab or scroll over the strip. Add agent and Settings are always available. Right-click a tab to move, close, restart, or disable it; middle-click closes its window. Settings → Arrange tabs uses ←/→ to select, Super+Shift+←/→ to move, Enter to open, and Esc to finish. Tabs show whether an agent is running, starting (…) or not started yet.
 - **Directional switching.** Picking a tab to the right brings that agent in from the right while the old one leaves left, and the reverse for tabs on the left. The slide is ~250 ms and only applies to switches; your other window animations aren't touched.
 - **Cycle hotkeys** (default Super+Alt+← / →). They are only bound while the panel is open, so the rest of the time Omarchy's own binds on those keys work as normal.
 - **Per-agent shortcuts** (e.g. Super+Shift+A opens Grok Bot directly).
 - **Remembers** the last agent you used. Your mouse cursor is never moved, and only the visible agent dims the desktop.
-- **Agent auto-detection.** Install finds the agents you have and lets you pick and order them. Agents that aren't installed are skipped.
+- **Agent auto-detection.** Interactive install offers a GUI picker for the first agent; add others from the strip as needed. Agents that aren't installed are skipped.
 - **Portable.** No hard-coded paths. Colours come from your active Omarchy theme, and the panel follows whichever monitor is focused, at any resolution or scale.
 
 - **Send to agent.** `send_key` pastes your selected text into the agent; right-click files in Nautilus → *Send to agent*.
@@ -26,13 +26,13 @@ Requires Omarchy 3.x with the Hyprland **Lua** config (Hyprland 0.55+, tested on
 ```sh
 omarchy plugin add https://github.com/PaytonORogers/omarchy-agent-switcher --enable --yes
 ```
-On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Run `omarchy-agents setup` to pick and order them.
+On first load the panel runs the bundled `install.sh --from-shell` once. That enables one agent (Grok Bot if it is installed, otherwise the first one found) and lists the rest commented out. Use Add agent in the strip to add more.
 
 Or from a checkout (interactive agent picker):
 ```sh
 git clone https://github.com/PaytonORogers/omarchy-agent-switcher.git
 cd omarchy-agent-switcher
-./install.sh          # interactive: pick + order detected agents (uses gum if present)
+./install.sh          # interactive: finish with the GUI agent picker
 ./install.sh --yes    # non-interactive: enable every detected agent
 ./install.sh --no-restart   # skip the shell restart (strip loads next time the shell restarts)
 ./install.sh --with-nautilus  # optional: "Send to agent" in the Nautilus right-click menu (needs python-nautilus)
@@ -60,11 +60,15 @@ omarchy-agents enable "Claude Code"   # add one back
 omarchy-agents setup                  # checklist of everything detected (X toggles)
 ```
 
-After choosing agents, use Up/Down to highlight a row and Alt+Up/Down to move it. Enter saves the order; Esc cancels setup without changing the config. `K`/`J` also move rows when a terminal intercepts Alt+arrows.
+Configure agents in the strip. Settings lets you arrange tabs, choose which agent opens, show hints, change usage display, and cycle window opacity through 75%, 85%, and 100%. Changes save immediately. Reordering is contextual: normal Omarchy workspace/window shortcuts continue to work after leaving Arrange tabs. The strip never takes typing focus during ordinary opening.
 
-`only = Grok Bot, Claude Code` in `agents.conf` is the same list, in tab order. `setup` rewrites the agent lines from what you check and clears `only`. `setup --yes` still takes every detected agent.
+Add agent checks only the chosen agent. Supported successful checks add the tab without launching a window. Signed-out agents offer Sign in; agents without a supported check offer Already signed in or Open agent. Sign-in happens on a normal workspace, with a closable controller containing Check again and Cancel. Closing the agent window does not confirm sign-in. A tab is added only after verification or explicit confirmation. Failed window launches offer Retry. Cancellation preserves the existing config and restores parking rules.
 
-Interactive setup opens only requested sign-in windows outside the panel before adding selected tabs. For agents without an automated check, choose `y` if already ready or `l` to open sign-in. During sign-in, close the app normally or use `c` to close its window and check/confirm readiness. Codex and Claude Code use their native login-status commands; other agents require confirmation that they are ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
+Codex and Claude Code use their native authentication-status commands. Grok Bot attempts a fresh service check using its own session only; failed or unavailable checks require confirmation. Native CLI status reports local authentication state and does not guarantee remote validity. Credential contents never appear in status output.
+
+The optional `omarchy-agents setup` checklist retains fresh all-selected/Yes defaults and existing selections/order. It has no ordering or preference screen; new selections append, and custom agent entries and unrelated settings are retained. Use `s` to skip or `q` to cancel sign-in without changing the config.
+
+`only = Grok Bot, Claude Code` controls tab order. `omarchy-agents move NAME left|right` moves one position and stops at either end. `agents --json` returns installed/enabled agents and GUI settings; `setting KEY VALUE` accepts open_on, show_hint, usage_display, and opacity. Advanced configuration remains available in agents.conf.
 
 `setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
 

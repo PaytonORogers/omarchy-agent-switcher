@@ -179,7 +179,7 @@ $OA show A >/dev/null 2>&1; sleep 0.6
 check "no refocus when another window took focus meanwhile (first link click)" "[[ \$(evals | grep -c \"focus({ window = 'address:0xa1' })\") == 1 ]]"
 rm -f "$FAKE/activewindow.json"
 check "post-show refocus puts the pointer back" "grep -q 'cursor.move({ x = \${cp%%,\*}' $ROOT/bin/omarchy-agents"
-check "strip layer never takes keyboard focus" "grep -q 'keyboardFocus: WlrKeyboardFocus.None' $ROOT/plugin/Switcher.qml && ! grep -q OnDemand $ROOT/plugin/Switcher.qml"
+check "normal strip opening leaves keyboard focus in the agent" "grep -q 'keyboardFocus: root.arranging || root.controlMode' $ROOT/plugin/Switcher.qml"
 echo "== evict non-agent windows from the agents workspace"
 setup_world
 echo '[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1.5,"transform":0,"focused":true,"activeWorkspace":{"id":3,"name":"3"},"specialWorkspace":{"name":"special:agents"}}]' > "$FAKE/monitors.json"
@@ -356,7 +356,7 @@ check "click_through = false keeps modal dim_around" "evals | grep -q \"dim_arou
 
 echo "== hover never resizes the strip"
 check "window width uses fixed hint metrics, not the live hint text" "grep -q 'hintLine.visible ? hintMetrics.width + 16' $ROOT/plugin/Switcher.qml && ! grep -q 'hintLine.implicitWidth' $ROOT/plugin/Switcher.qml"
-check "hint line visibility doesn't depend on hover" "grep -q 'visible: root.hint && root.menuFor === \"\"' $ROOT/plugin/Switcher.qml"
+check "hint line visibility doesn't depend on hover" "grep -q 'visible: (root.hint || root.arranging) && root.controlMode === \"\"' $ROOT/plugin/Switcher.qml"
 check "no hidden reserved percent width on tabs" "! grep -q 'usageDisplay === \"percent\" || ma.containsMouse' $ROOT/plugin/Switcher.qml"
 
 echo "== QML syntax"
@@ -564,7 +564,7 @@ check "direct keys unaffected by open_on" "evals | grep -q \"address:0xb1', x = 
 setup_world; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
 printf 'codex | A | tui | bin:agent-a | class.a | | \nclaude | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 script -qc "printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup" /dev/null >/dev/null 2>&1 || printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup >/dev/null 2>&1
-check "wizard writes open_on" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
+check "setup retains the opening default" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
 
 setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
 printf 'a | A | tui | bin:agent-a | class.a | | \ng | Grok Bot | tui | bin:agent-b | grok-bot | | \nc | C | tui | bin:agent-c | class.c | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
@@ -664,7 +664,7 @@ check "existing gum setup preselects current list" "grep -q -- '--selected B' $F
 printf 'A | class.a | agent-a | |\n' >> "$C"
 echo 'only = B, A' >> "$C"
 printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
-check "Enter keeps existing tab order in the ordering list" "[[ \$($OA list) == \$'B\nA' ]]"
+check "Setup preserves existing tab order" "[[ \$($OA list) == \$'B\nA' ]]"
 echo 'only = ' >> "$C"; cp "$C" "$T/before"; : > "$FAKE/gum"
 printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1 || true
 check "empty gum selection stays empty" "! grep -q -- '--selected' $FAKE/gum && cmp -s $C $T/before"
@@ -672,7 +672,7 @@ setup_world; echo 'only = cLaSs.C, a' >> "$XDG_CONFIG_HOME/omarchy-agent-switche
 check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \$'C\nA' ]]"
 check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
 
-check "interactive ordering regression suite" "python3 \"$ROOT/tests/order-agents.py\""
+check "strip configuration regression suite" "python3 \"$ROOT/tests/strip-config.py\""
 
 check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
 

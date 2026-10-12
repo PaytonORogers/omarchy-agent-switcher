@@ -7,11 +7,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq lua5.4 qt6-declarative-dev-tools
       - name: shellcheck
-        run: shellcheck -S warning share/order-agents bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*
+        run: shellcheck -S warning share/configure.sh bin/omarchy-agents install.sh uninstall.sh tests/run.sh tests/stubs/*
       - name: python syntax
-        run: python3 -m py_compile integrations/nautilus/*.py share/collectors/refresh share/collectors/collect-*
+        run: python3 -m py_compile integrations/nautilus/*.py share/collectors/refresh share/collectors/collect-* share/configure-signin
       - name: QML syntax
-        run: /usr/lib/qt6/bin/qmlformat plugin/Switcher.qml > /dev/null
+        run: /usr/lib/qt6/bin/qmlformat plugin/*.qml > /dev/null
       - name: manifest
         run: jq -e '.id and .version and .entryPoints.panel' manifest.json
       - name: version consistency
