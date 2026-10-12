@@ -304,7 +304,7 @@ setup_login_window() { # registry line, normal workspace ID
   if [[ $id == cursor ]] && pgrep -x cursor >/dev/null 2>&1; then
     echo "Cursor is already starting; finish signing in in its window."; return 0
   fi
-  hyprctl dispatch workspace "$2" >/dev/null 2>&1 || return 1
+  hyprctl eval "hl.dispatch(hl.dsp.focus({ workspace = '$2' }))" >/dev/null 2>&1 || return 1
   ( cd "$HOME" && exec setsid bash -c "$(resolve_cmd "$l")" ) >/dev/null 2>&1 8>&- 9>&- &
 }
 setup_login_gate() {

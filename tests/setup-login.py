@@ -81,7 +81,7 @@ class SetupLogin(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn('A ', self.conf.read_text())
         calls = (self.fake / 'calls').read_text()
-        self.assertIn("dispatch\tworkspace 2", calls)
+        self.assertIn("hl.dsp.focus({ workspace = '2' })", calls)
         self.assertFalse((self.state / 'setup-login').exists())
 
     def test_skip_preserves_config_and_rules(self):
