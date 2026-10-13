@@ -10,6 +10,8 @@
 #   omarchy-agents reset-size [name|all]             forget sizes saved from resizing
 #   omarchy-agents shortcuts                         show the cheat sheet
 #   omarchy-agents send [--text T] | send-files <agent|-> <path>... | usage [--force]
+#   omarchy-agents agents                         on/off list
+#   omarchy-agents enable|disable <name>...       show or hide agents in the strip
 #   omarchy-agents hide | autohide | list | rules [--reload] | setup [--yes] | doctor | hint on|off|toggle | version
 set -u
 VERSION=1.2.0
@@ -65,6 +67,8 @@ available() {
   find_prog "$x" >/dev/null
 }
 load_conf() {
+  names=(); classes=(); cmds=(); keys=(); icons=(); providers=(); all_names=(); available_names=(); available_classes=(); conf_warnings=()
+  unset 'S[only]'
   [[ -f $CONF ]] || return 0
   local line n c l k ic v key
   while IFS= read -r line || [[ -n $line ]]; do
@@ -77,9 +81,11 @@ load_conf() {
       valid_class "$c" || { conf_warnings+=("invalid window class '$c' for '$n' (allowed: letters, digits, . _ -); tab skipped"); continue; }
       [[ -n $k ]] && ! valid_key "$k" && { conf_warnings+=("invalid key '$k' for '$n'; key ignored"); k=""; }
       all_names+=("$n"); available "$l" || continue
+      available_names+=("$n"); available_classes+=("$c")
       names+=("$n"); classes+=("$c"); cmds+=("$l"); keys+=("$k"); icons+=("$ic"); providers+=("$pv")
     elif [[ $line == *=* ]]; then
       key=$(trim "${line%%=*}"); v=$(trim "${line#*=}"); v=$(trim "${v%%[[:space:]]#*}")
+      if [[ $key == only ]]; then S[only]=$v; continue; fi
       [[ -v S[$key] ]] || conf_warnings+=("unknown setting '$key'")
       [[ $v == *=* ]] && conf_warnings+=("setting '$key' looks like several settings on one line; use one per line")
       S[$key]=$v
@@ -89,6 +95,23 @@ load_conf() {
   case ${S[strip_edge]} in auto|top|bottom) ;; *) conf_warnings+=("invalid strip_edge '${S[strip_edge]}' (auto | top | bottom)"); S[strip_edge]=auto ;; esac
   local kk; for kk in toggle_key prev_key next_key shortcuts_key send_key; do [[ -z ${S[$kk]} ]] || valid_key "${S[$kk]}" || { conf_warnings+=("invalid $kk '${S[$kk]}'"); S[$kk]=""; }; done
   [[ -n ${S[hint]} && -z ${S[show_hint]} ]] && S[show_hint]=${S[hint]}
+  # `only` is the strip, in tab order. A missing line shows every available agent.
+  # An empty value shows nothing. Installed agents left off the list stay out.
+  [[ -v 'S[only]' ]] || return 0
+  local -a nn=() nc=() nl=() nk=() ni=() np=() wanted=()
+  local w i
+  IFS=',' read -ra wanted <<<"${S[only]}"
+  for w in "${wanted[@]+"${wanted[@]}"}"; do
+    w=$(trim "$w"); [[ -n $w ]] || continue
+    for i in "${!names[@]}"; do
+      same_agent "$w" "${names[$i]}" "${classes[$i]}" || continue
+      nn+=("${names[$i]}"); nc+=("${classes[$i]}"); nl+=("${cmds[$i]}")
+      nk+=("${keys[$i]}"); ni+=("${icons[$i]}"); np+=("${providers[$i]}")
+      break
+    done
+  done
+  names=("${nn[@]+"${nn[@]}"}"); classes=("${nc[@]+"${nc[@]}"}"); cmds=("${nl[@]+"${nl[@]}"}")
+  keys=("${nk[@]+"${nk[@]}"}"); icons=("${ni[@]+"${ni[@]}"}"); providers=("${np[@]+"${np[@]}"}")
   return 0
 }
 theme_color() { # theme_color <key> -> #RRGGBB from the active Omarchy theme
@@ -249,11 +272,30 @@ setup() {
     chosen=("${found[$pick]}"); for i in "${!found[@]}"; do (( i == pick )) || extra+=("${found[$i]}"); done
   elif (( yes )); then chosen=("${found[@]}")
   else
-    echo "Detected agents:"
-    if have_gum; then
-      mapfile -t sel < <(gum choose --no-limit --header "Agents for the Super+A switcher (space toggles)" --selected="$(IFS=,; echo "${labels[*]}")" "${labels[@]}")
+    load_conf
+    local -a pre=(); local shown n
+    if [[ ! -f $CONF ]]; then pre=("${labels[@]}")
     else
-      for i in "${!labels[@]}"; do read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}"); done
+      for f in "${labels[@]}"; do
+        shown=0
+        for n in "${names[@]+"${names[@]}"}"; do [[ $n == "$f" ]] && shown=1; done
+        (( shown )) && pre+=("$f")
+      done
+    fi
+    echo "Detected agents (unchecked ones stay off the strip):"
+    if have_gum; then
+      local selected=""
+      local -a gum=(gum choose --no-limit --header "Space toggles an agent. Enter keeps the checked ones.")
+      (( ${#pre[@]} )) && selected="$(IFS=,; echo "${pre[*]}")"
+      [[ -n $selected ]] && gum+=(--selected "$selected")
+      mapfile -t sel < <("${gum[@]}" "${labels[@]}")
+    else
+      for i in "${!labels[@]}"; do
+        shown=0
+        for n in "${pre[@]+"${pre[@]}"}"; do [[ $n == "${labels[$i]}" ]] && shown=1; done
+        if (( shown )); then read -r -p "  include ${labels[$i]}? [Y/n] " a; [[ $a =~ ^[Nn] ]] || sel+=("${labels[$i]}")
+        else read -r -p "  include ${labels[$i]}? [y/N] " a; [[ $a =~ ^[Yy] ]] && sel+=("${labels[$i]}"); fi
+      done
     fi
     (( ${#sel[@]} )) || die "nothing selected"
     ordered=("${sel[@]}")
@@ -272,7 +314,8 @@ setup() {
   fi
   mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] && cp "$CONF" "$CONF.bak"
   {
-    if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' | grep -vE '^[[:space:]]*open_on[[:space:]]*='; else sed '/|/d; /^# Agents (generated/d; /^[[:space:]]*open_on[[:space:]]*=/d' "$DATA/agents.conf.default"; fi
+    if [[ -f $CONF ]]; then grep -v '|' "$CONF" | grep -v '^# Agents (generated' | grep -vE '^[[:space:]]*open_on[[:space:]]*=' | grep -vE '^[[:space:]]*only[[:space:]]*='
+    else sed '/|/d; /^# Agents (generated/d; /^[[:space:]]*open_on[[:space:]]*=/d; /^[[:space:]]*#\{0,1\}[[:space:]]*only[[:space:]]*=/d' "$DATA/agents.conf.default"; fi
     echo "open_on = $oo                # what the toggle opens: last | first | <agent name or class>"
     echo "# Agents (generated by \`omarchy-agents setup\`): name | window class | launch | direct key | icon"
     for f in "${chosen[@]}"; do agent_line "$f"; done
@@ -723,15 +766,24 @@ need_idx() { local r; r=$(idx_of "$1"); [[ -n $r ]] && { echo "$r"; return 0; }
   echo "omarchy-agents: no available agent named '$1' (see: omarchy-agents list)" >&2; log "unknown agent '$1'"; return 1; }
 
 doctor() {
-  load_conf; local n c w
+  load_conf; local n c w shown s
   echo "omarchy-agents $VERSION"
   echo "config:   $CONF $([[ -f $CONF ]] || echo '(missing)')"
   echo "rules:    $RULES $([[ -f $RULES ]] || echo '(missing)')"
   echo "plugin:   $(timeout 2 omarchy-shell agentswitcher ping 2>/dev/null || echo 'not loaded (opens on first use)')"
   for c in hyprctl jq flock omarchy-shell notify-send; do command -v "$c" >/dev/null || echo "  MISSING dependency: $c"; done
   timeout 2 omarchy-shell shell ping >/dev/null 2>&1 || echo "  warning: Omarchy shell not responding (omarchy-shell shell ping)"
-  for n in "${all_names[@]}"; do [[ " ${names[*]} " == *" $n "* ]] && echo "  ok      $n" || echo "  missing $n (program not found; tab skipped)"; done
-  for w in "${conf_warnings[@]}"; do echo "  warning: $w"; done
+  for n in "${available_names[@]+"${available_names[@]}"}"; do
+    shown=0
+    for s in "${names[@]+"${names[@]}"}"; do [[ $s == "$n" ]] && shown=1; done
+    if (( shown )); then echo "  ok      $n"; else echo "  hidden  $n"; fi
+  done
+  for n in "${all_names[@]+"${all_names[@]}"}"; do
+    shown=0
+    for s in "${available_names[@]+"${available_names[@]}"}"; do [[ $s == "$n" ]] && shown=1; done
+    (( shown )) || echo "  missing $n (program not found; tab skipped)"
+  done
+  for w in "${conf_warnings[@]+"${conf_warnings[@]}"}"; do echo "  warning: $w"; done
   echo "hyprland config errors:"; hyprctl configerrors
   [[ -s $STATE/log ]] && { echo "recent log ($STATE/log):"; tail -n 8 "$STATE/log"; }
   return 0
@@ -894,17 +946,167 @@ bar_entry() { # add|remove our bar icon in shell.json: center section, directly 
 # Keep the log small.
 [[ -f $STATE/log ]] && (( $(stat -c %s "$STATE/log") > 200000 )) && tail -n 500 "$STATE/log" > "$STATE/log.tmp" && mv "$STATE/log.tmp" "$STATE/log"
 
+same_agent() { # same_agent <want> <name> <class>
+  local w n c
+  w=${1,,}; n=${2,,}; c=${3,,}
+  [[ -n $w && ( $w == "$n" || $w == "$c" ) ]]
+}
+upsert_only() {
+  local value tmp=$CONF.upsert line placed=0
+  value=$1
+  [[ -f $CONF ]] || die "no config at $CONF"
+  : > "$tmp"
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^[[:space:]]*only[[:space:]]*= ]]; then printf 'only = %s\n' "$value" >> "$tmp"; placed=1
+    else printf '%s\n' "$line" >> "$tmp"; fi
+  done < "$CONF"
+  if (( !placed )); then
+    awk -v v="$value" 'BEGIN{done=0} !done && /^[[:space:]]*toggle_key[[:space:]]*=/ { print; print "only = " v; done=1; next } { print } END { if (!done) print "only = " v }' "$tmp" > "$tmp.ins" && mv "$tmp.ins" "$tmp"
+  fi
+  mv "$tmp" "$CONF"
+}
+apply_rules() { gen_rules; hyprctl reload >/dev/null 2>&1 || true; }
+agents_status() {
+  load_conf
+  local n shown s any=0
+  echo "In the strip:"
+  if (( ${#names[@]} )); then for n in "${names[@]}"; do echo "  on   $n"; done; else echo "  (none)"; fi
+  echo "Installed, not in the strip:"
+  for n in "${available_names[@]+"${available_names[@]}"}"; do
+    shown=0
+    for s in "${names[@]+"${names[@]}"}"; do [[ $s == "$n" ]] && shown=1; done
+    if (( !shown )); then echo "  off  $n"; any=1; fi
+  done
+  (( any )) || echo "  (none)"
+  echo
+  echo "omarchy-agents enable NAME    add one"
+  echo "omarchy-agents disable NAME   hide one"
+  echo "omarchy-agents setup          checklist of everything installed"
+  echo "Or edit \`only = ...\` in $CONF"
+}
+ensure_agent_line() { # make sure CONF has an uncommented line for this name/class
+  local want line raw n c tmp=$CONF.line have=0 uncommented=0 reg
+  want=$1
+  [[ -f $CONF ]] || die "no config at $CONF"
+  : > "$tmp"
+  while IFS= read -r line || [[ -n $line ]]; do
+    raw=$line
+    [[ $raw =~ ^[[:space:]]*# ]] && raw=$(trim "${raw#\#}")
+    if [[ $raw == *"|"* ]]; then
+      IFS='|' read -r n c _ <<<"$raw"
+      if same_agent "$want" "$(trim "$n")" "$(trim "$c")"; then
+        have=1
+        if [[ $line =~ ^[[:space:]]*# ]]; then printf '%s\n' "$raw" >> "$tmp"; uncommented=1
+        else printf '%s\n' "$line" >> "$tmp"; fi
+        continue
+      fi
+    fi
+    printf '%s\n' "$line" >> "$tmp"
+  done < "$CONF"
+  if (( !have )); then
+    [[ -f $REGISTRY ]] || { rm -f "$tmp"; die "registry not found ($REGISTRY); run install.sh"; }
+    reg=$(find_registry "$want") || { rm -f "$tmp"; die "no agent matching '$want'. Run: omarchy-agents agents"; }
+    agent_line "$reg" >> "$tmp"
+  fi
+  mv "$tmp" "$CONF"
+  (( uncommented )) && echo "uncommented $(trim "$n") in $CONF"
+}
+find_registry() {
+  local want line id n c
+  want=$1
+  [[ -f $REGISTRY ]] || return 1
+  while IFS= read -r line; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    IFS='|' read -r id n _ _ c _ <<<"$line"
+    if same_agent "$want" "$(trim "$n")" "$(trim "$c")" || same_agent "$want" "$(trim "$id")" "$(trim "$c")"; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done < "$REGISTRY"
+  return 1
+}
+enable_agents() {
+  (( $# )) || die "usage: omarchy-agents enable NAME..."
+  local arg w n s hit i already joined match
+  local -a cur=() next=()
+  for arg in "$@"; do ensure_agent_line "$arg"; done
+  load_conf
+  if [[ -v 'S[only]' ]]; then
+    IFS=',' read -ra cur <<<"${S[only]}"
+    for w in "${cur[@]+"${cur[@]}"}"; do
+      w=$(trim "$w"); [[ -n $w ]] || continue
+      for i in "${!available_names[@]}"; do
+        same_agent "$w" "${available_names[$i]}" "${available_classes[$i]}" || continue
+        w=${available_names[$i]}
+        break
+      done
+      hit=0
+      for s in "${next[@]+"${next[@]}"}"; do [[ $s == "$w" ]] && hit=1; done
+      (( hit )) || next+=("$w")
+    done
+    for arg in "$@"; do
+      match=""
+      for i in "${!available_names[@]}"; do
+        if same_agent "$arg" "${available_names[$i]}" "${available_classes[$i]}"; then match=${available_names[$i]}; break; fi
+      done
+      [[ -n $match ]] || die "'$arg' is not available. Run: omarchy-agents agents"
+      already=0
+      for s in "${next[@]+"${next[@]}"}"; do [[ $s == "$match" ]] && already=1; done
+      (( already )) || next+=("$match")
+    done
+    joined=${next[0]}
+    for n in "${next[@]:1}"; do joined+=", $n"; done
+    upsert_only "$joined"
+  fi
+  apply_rules
+  load_conf
+  echo "showing: ${names[*]:-(none)}"
+}
+disable_agents() {
+  (( $# )) || die "usage: omarchy-agents disable NAME..."
+  load_conf
+  local -a cur=() next=()
+  local w n drop seen arg i joined
+  if [[ -v 'S[only]' ]]; then IFS=',' read -ra cur <<<"${S[only]}"; else cur=("${names[@]+"${names[@]}"}"); fi
+  for w in "${cur[@]+"${cur[@]}"}"; do
+    w=$(trim "$w"); [[ -n $w ]] || continue
+    drop=0
+    for i in "${!available_names[@]}"; do
+      same_agent "$w" "${available_names[$i]}" "${available_classes[$i]}" || continue
+      w=${available_names[$i]}
+      for arg in "$@"; do same_agent "$arg" "${available_names[$i]}" "${available_classes[$i]}" && drop=1; done
+      break
+    done
+    for arg in "$@"; do same_agent "$arg" "$w" "" && drop=1; done
+    if (( !drop )); then
+      seen=0
+      for n in "${next[@]+"${next[@]}"}"; do [[ $n == "$w" ]] && seen=1; done
+      (( seen )) || next+=("$w")
+    fi
+  done
+  (( ${#next[@]} == ${#cur[@]} )) && die "no matching agent. Run: omarchy-agents agents"
+  joined="${next[0]:-}"
+  if (( ${#next[@]} )); then for n in "${next[@]:1}"; do joined+=", $n"; done; else joined=""; fi
+  upsert_only "$joined"
+  apply_rules
+  load_conf
+  echo "showing: ${names[*]:-(none)}"
+}
+
 action=${1:-toggle}
 case $action in
   rules) gen_rules; [[ ${2:-} == --reload ]] && hyprctl reload >/dev/null 2>&1; exit 0 ;;
   setup) shift; setup "$@"; exit ;;
   doctor) doctor; exit ;;
-  list) load_conf; printf '%s\n' "${names[@]}"; exit 0 ;;
+  agents) agents_status; exit ;;
+  enable) shift; enable_agents "$@"; exit ;;
+  disable) shift; disable_agents "$@"; exit ;;
+  list) load_conf; printf '%s\n' "${names[@]+"${names[@]}"}"; exit 0 ;;
   version|--version) echo "$VERSION"; exit 0 ;;
   hint) ( load_conf; set_hint "${2:-toggle}" ) || exit 1
         if [[ $(hyprctl -j monitors | jq -r 'first(.[]|select(.focused)).specialWorkspace.name') == "special:$WS" ]]; then
           runtime_init; strip_show "$(idx_of "$last")"; wait; fi; exit 0 ;;
-  -h|--help|help) sed -n '5,13p' "$0"; exit 0 ;;
+  -h|--help|help) sed -n '5,15p' "$0"; exit 0 ;;
   status-set) load_conf; c=${2:-}; i=$(idx_of "$c"); [[ -n $i ]] && c=${classes[$i]}
           status_set "$c" "${3:-}" || die "usage: status-set <agent> working|approval|error|done|idle"; exit 0 ;;
   status) load_conf; if [[ ${2:-} == --json ]]; then status_json; else status_json | jq -r '.agents[] | "\(.name): \(.state)"'; fi; exit 0 ;;
@@ -975,6 +1177,6 @@ case $action in
             # focus on a regular window, or on nothing at all (clicked empty desktop) => leave
             if [[ $aa == - || $aa == null || -z $aa ]] || [[ $awn != "special:$WS" ]]; then hide_all; fi
           fi ;;
-  *) sed -n '5,13p' "$0" >&2; exit 2 ;;
+  *) sed -n '5,15p' "$0" >&2; exit 2 ;;
 esac
 exit 0

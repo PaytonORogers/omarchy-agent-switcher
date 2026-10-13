@@ -28,6 +28,7 @@ sound = default             # status sound on approval/error/done: default (them
 # start_hidden = grok-bot  # comma list of window classes to launch hidden at login
 # ---- agents: name | window class | launch | direct key (optional) | icon (optional) | usage provider (optional) ----
 # Agents whose program isn't installed are skipped automatically.
+# only = Grok Bot, Grok Build   # omit this line to show every agent line below
 Grok Bot   | grok-bot              | uwsm-app -- grok-bot | SUPER + SHIFT + A | grok-bot
 Grok Build | org.omarchy.grokbuild | omarchy-launch-tui --app-id=org.omarchy.grokbuild grok | SUPER + ALT + A | grok
 # Claude Code | org.omarchy.agent.claude | omarchy-launch-tui --app-id=org.omarchy.agent.claude claude | | claude
