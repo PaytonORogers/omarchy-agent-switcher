@@ -306,13 +306,16 @@ runtime_init() {
     | ($f | lw) as $wh
     | ([$m[0][] | . as $x | ($x|lw) as $w2 | [$x.x, $x.x + ($w2[0]/$x.scale|floor)]]) as $b
     | "\($f.name) \($f.x) \($f.y) \(($wh[0]/$f.scale)|floor) \(($wh[1]/$f.scale)|floor) \(if $f.specialWorkspace.name==$ws then 1 else 0 end) \([$b[][0]]|min) \([$b[][1]]|max) \(($f.reserved // [0,0,0,0]) | map(floor) | join(" "))",
-      ($cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase)))) // null | if . then "\($k) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end)')
+      ($cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase)))) // null | if . then "\($k) \(.address) \(.workspace.name) \(.size[0]) \(.size[1]) \(.at[0])" else empty end),
+      ([$cls[] as $k | first($c[0][] | select((((.class // "") | ascii_downcase) == ($k | ascii_downcase)) or (((.initialClass // "") | ascii_downcase) == ($k | ascii_downcase))) | .address) // empty]) as $t
+      | ($c[0][] | select(.workspace.name == $ws) | select(.address as $x | $t | index($x) | not) | "@stray \(.address) \(.class // "-" | gsub(" "; "_")) \($f.activeWorkspace.id // "e+0")")')
   rm -f "$tmp".*
   read -r MON MX MY MW MH VIS DX0 DX1 RL RT RR RB <<<"$(head -1 <<<"$out")"
   is_int "${MW:-x}" && is_int "${MH:-x}" && is_int "${MX:-x}" && is_int "${MY:-x}" || die "could not read monitor geometry from hyprctl"
   is_int "${DX0:-x}" || DX0=$MX; is_int "${DX1:-x}" || DX1=$((MX+MW))
-  declare -gA ADDR=() WSN=() WW=() WH=() WX=() TW=() TH=()
+  declare -gA ADDR=() WSN=() WW=() WH=() WX=() TW=() TH=(); STRAYS=()
   local c a w x y z; while read -r c a w x y z; do
+    [[ $c == @stray ]] && { is_addr "$a" && STRAYS+=("$a $w $x"); continue; }   # untracked window on special:agents
     [[ -n $c ]] && is_addr "$a" || continue; ADDR[$c]=$a; WSN[$c]=$w; WW[$c]=$x; WH[$c]=$y; WX[$c]=$z
   done <<<"$(tail -n +2 <<<"$out")"
   for v in RL RT RR RB; do is_int "${!v:-x}" || printf -v "$v" 0; done
@@ -668,8 +671,20 @@ strip_show() { # after the strip maps, give the keyboard back to the agent windo
 strip_hide() { ( timeout 2 omarchy-shell -q agentswitcher hide ) >/dev/null 2>&1 9>&- & }
 starting() { notify-send -a "Agent switcher" -u low -t 2000 "Starting ${names[$1]}…" 2>/dev/null 9>&- & }
 
+sweep_strays() { # safety net: only tracked agent windows may live on special:agents. A second window of an
+  # agent class (duplicate launch, restart that raced the old window) or anything evict missed is never
+  # parked or tracked, so it would sit at the slot behind the active agent with no way to reach it.
+  # Move it to the regular workspace, visible and closable.
+  local s a cl tw; for s in "${STRAYS[@]}"; do read -r a cl tw <<<"$s"; is_addr "$a" || continue
+    [[ $tw =~ ^-?[0-9]+$ ]] || tw='e+0'
+    prop "$a" opacity "$OA"; prop "$a" opacity_inactive "$OI"; prop "$a" dim_around 0
+    q "hl.dsp.window.move({ workspace = '$tw', follow = false, window = 'address:$a' })"
+    log "stray $a ($cl) on special:$WS -> workspace $tw"; done
+  STRAYS=(); return 0
+}
 open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
   local i=$1 a j b pending=0
+  sweep_strays
   ensure "$i" || pending=1; a=$(addr_of "$i")
   for j in "${!names[@]}"; do (( j == i )) && continue; b=$(addr_of "$j"); [[ -n $b ]] || continue
     ensure "$j"; prop "$b" opacity 0; prop "$b" opacity_inactive 0; prop "$b" dim_around 0; done   # hidden workspaces clamp off-screen windows
@@ -687,7 +702,8 @@ open_idx() { # hidden -> visible; the special workspace slides up (slidevert)
 }
 switch_to() { # visible -> horizontal slide in tab order, one eval
   local i=$1 cur a b c from out pending=0 j x
-  status_seen "$i"; cur=$(idx_of "$last"); (( i == cur )) && { strip_show "$i"; return 0; }
+  status_seen "$i"; cur=$(idx_of "$last"); sweep_strays
+  (( i == cur )) && { [[ -n $LUA ]] && flush; strip_show "$i"; return 0; }
   ensure "$i" || pending=1; a=$(addr_of "$i"); b=$(addr_of "$cur"); c=${classes[$i]}
   # Incoming normally already waits on the correct side (pre-parked); only teleport if not.
   if (( i > cur )); then from=$(right_of); else from=$(left_of "${TW[$c]}"); fi
@@ -932,6 +948,10 @@ case $action in
           [[ -n $a ]] && { q "hl.dsp.window.close({ window = 'address:$a' })"; flush; }
           if [[ $action == restart ]]; then
             for _ in $(seq 30); do sleep 0.2; [[ -z $(client_addr "${classes[$i]}") ]] && break; done
+            if [[ -n $(client_addr "${classes[$i]}") ]]; then   # old window still open: a second copy would be untracked
+              log "restart ${names[$i]}: old window did not close, not starting a second copy"
+              notify-send -a "Agent switcher" -u normal "${names[$i]} didn't close" "Close it first, then restart." 2>/dev/null
+              visible && strip_show "$(idx_of "$last")"; exit 0; fi
             ADDR[${classes[$i]}]=""; rm -f "$STATE/launch.${classes[$i]}"
             if visible && [[ ${names[$i]} == "$last" ]]; then launch "$i"; starting "$i"; await_window "$i"; else launch "$i"; fi
           fi

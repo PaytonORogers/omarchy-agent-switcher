@@ -194,6 +194,19 @@ check "window on a regular workspace is left alone" "! grep -q . $FAKE/calls"
 check "unknown or bad address does nothing" "! grep -q . $FAKE/calls"
 check "plugin evicts on openwindow even when closed, no browser list" "grep -q 'run(\\[\"evict\"' $ROOT/plugin/Switcher.qml && ! grep -qiE 'chrom|firefox|zen' $ROOT/plugin/Switcher.qml"
 
+echo "== safety net: untracked windows on special:agents"
+setup_world
+echo '[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1.5,"transform":0,"focused":true,"activeWorkspace":{"id":3,"name":"3"},"specialWorkspace":{"name":""}}]' > "$FAKE/monitors.json"
+echo '[{"class":"class.a","address":"0xa1","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]},{"class":"class.b","address":"0xb1","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]},{"class":"class.b","address":"0xb9","workspace":{"name":"special:agents"},"size":[793,590],"at":[243,43]},{"class":"kitty","address":"0xc3","workspace":{"name":"2"},"size":[800,600],"at":[0,0]}]' > "$FAKE/clients.json"
+: > "$FAKE/calls"; $OA show A >/dev/null 2>&1
+check "duplicate agent window is moved off special:agents on show" "evals | grep -q \"workspace = '3', follow = false, window = 'address:0xb9'\""
+check "tracked windows stay on special:agents" "! evals | grep -qE \"workspace = '3', follow = false, window = 'address:0x(a1|b1)'\""
+check "window on a regular workspace is not swept" "! evals | grep -q 'address:0xc3'"
+check "stray is logged" "grep -q 'stray 0xb9 (class.b)' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+monitors 1; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"; : > "$FAKE/calls"; $OA show B >/dev/null 2>&1
+check "switch also sweeps the duplicate" "evals | grep -q \"follow = false, window = 'address:0xb9'\""
+check "restart refuses a second copy while the old window is open" "grep -q 'not starting a second copy' $ROOT/bin/omarchy-agents"
+
 echo "== Esc closes the cheat sheet"
 setup_world; monitors 1; clients "class.a:0xa1:243"; $OA rules >/dev/null 2>&1; R=$XDG_CONFIG_HOME/hypr/agent-switcher.lua
 check "Esc bind only through sheet_keys, removed on off()" "grep -q 'sheet-close' $R && grep -q 'function agent_switcher.sheet_keys' $R && grep -q 'pcall(agent_switcher.sheet_keys, false)' $R"
