@@ -4,14 +4,31 @@
 # Usage: tests/run.sh        (needs bash, jq, flock; luac optional for Lua syntax checks)
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+TEST_NODE=${OMARCHY_AGENTS_TEST_NODE:-$(command -v node 2>/dev/null || true)}
+# Resolve mise shims before test fixtures replace HOME/PATH.
+if [[ $TEST_NODE == */mise/* ]] && command -v mise >/dev/null; then
+  TEST_NODE=$(mise which node 2>/dev/null || printf '%s' "$TEST_NODE")
+fi
 PASS=0; FAILN=0
 ok() { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAILN=$((FAILN+1)); echo "  FAIL $1"; [[ -n ${2:-} ]] && echo "       $2"; }
 check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
+# Strip IPC deliberately runs in the background. Await its observable result
+# rather than assuming it was delivered when the foreground command returned.
+eventually() {
+  local description=$1 assertion=$2 attempt
+  for attempt in {1..40}; do
+    if eval "$assertion"; then ok "$description"; return; fi
+    sleep 0.025
+  done
+  bad "$description" "$assertion"
+}
 
 # Fresh fake world: HOME, config, fake agent binaries, fake hyprland state.
 setup_world() {
   T=$(mktemp -d); export HOME=$T/home FAKE=$T/fake XDG_CONFIG_HOME=$T/home/.config XDG_STATE_HOME=$T/home/.local/state XDG_DATA_HOME=$T/home/.local/share
+  export XDG_RUNTIME_DIR=$T/runtime
+  mkdir -p "$XDG_RUNTIME_DIR"
   unset OMARCHY_AGENTS_CONF
   mkdir -p "$HOME/.local/bin" "$FAKE" "$XDG_CONFIG_HOME/omarchy-agent-switcher" "$XDG_CONFIG_HOME/hypr" "$T/agents"
   export PATH="$ROOT/tests/stubs:$T/agents:/usr/bin:/bin"
@@ -34,7 +51,7 @@ CONF
 monitors() { # monitors <special-visible 0|1> [second monitor]
   local sp=""; [[ $1 == 1 ]] && sp="special:agents"
   local m2=""; [[ ${2:-} == 2 ]] && m2=',{"name":"HDMI-A-1","x":1280,"y":0,"width":1920,"height":1080,"scale":1,"transform":0,"focused":false,"specialWorkspace":{"name":""}}'
-  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
+  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"activeWorkspace\":{\"id\":2},\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
 }
 clients() { # clients "class:addr:x" ...
   local out="[" c; for c in "$@"; do IFS=: read -r cl ad x <<<"$c"
@@ -83,7 +100,7 @@ $OA toggle
 check "open toggles special workspace" "evals | grep -q \"toggle_special('agents')\""
 check "open restores cursor" "evals | grep -q 'cursor.move({ x = 100, y = 200 })'"
 check "open: each dispatch pcall-wrapped" "! evals | grep -o 'hl.dispatch' | sed -n 1p | grep -q . || evals | grep -q 'pcall(function() hl.dispatch'"
-check "strip summoned with seq" "grep -q '\"seq\":' $FAKE/shell"
+eventually "strip summoned with seq" "grep -q '\"seq\":' $FAKE/shell"
 monitors 1; : > "$FAKE/calls"
 $OA show B
 # monitor logical width 1920/1.5=1280 -> slot x 243; right park = 1280+40
@@ -101,6 +118,21 @@ setup_world; monitors 1 2; clients "class.a:0xa1:243" "class.b:0xb1:3240" "class
 $OA show B
 check "outgoing parks left of the whole desktop" "evals | grep -q \"address:0xa1', x = -833\""
 check "incoming came from right of the whole desktop (3240)" "! evals | grep -q \"address:0xb1', prop = 'no_anim'\""
+
+echo "== reuse a tiled sign-in window"
+setup_world; clients "class.a:0xa1:0"
+jq 'map(.floating = false | .workspace.name = "2" | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "sign-in window floats before moving to the panel and resizing" "evals | grep -q \"window.float({ window = 'address:0xa1', action = 'set' }).*workspace = 'special:agents'.*window.resize({ window = 'address:0xa1', x = 793\""
+check "sign-in window is reused rather than launched again" "! grep -q 'launch A:' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+setup_world; clients "class.a:0xa1:243"
+jq 'map(.floating = false)' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "tiled window matching target size is still resized after floating" "evals | grep -q \"action = 'set'.*window.resize({ window = 'address:0xa1'\""
+setup_world; monitors 1; clients "class.a:0xa1:0"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+jq 'map(.floating = false | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA hide >/dev/null
+check "tiled sign-in size is not saved as a user panel resize" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
 
 echo "== unknown / missing agents"
 setup_world; clients "class.a:0xa1:243"; : > "$FAKE/calls"
@@ -177,7 +209,7 @@ $OA show A >/dev/null 2>&1; sleep 0.6
 check "no refocus when another window took focus meanwhile (first link click)" "[[ \$(evals | grep -c \"focus({ window = 'address:0xa1' })\") == 1 ]]"
 rm -f "$FAKE/activewindow.json"
 check "post-show refocus puts the pointer back" "grep -q 'cursor.move({ x = \${cp%%,\*}' $ROOT/bin/omarchy-agents"
-check "strip layer never takes keyboard focus" "grep -q 'keyboardFocus: WlrKeyboardFocus.None' $ROOT/plugin/Switcher.qml && ! grep -q OnDemand $ROOT/plugin/Switcher.qml"
+check "normal strip opening leaves keyboard focus in the agent" "grep -q 'keyboardFocus: root.arranging || root.controlMode' $ROOT/plugin/Switcher.qml"
 echo "== evict non-agent windows from the agents workspace"
 setup_world
 echo '[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1.5,"transform":0,"focused":true,"activeWorkspace":{"id":3,"name":"3"},"specialWorkspace":{"name":"special:agents"}}]' > "$FAKE/monitors.json"
@@ -354,7 +386,7 @@ check "click_through = false keeps modal dim_around" "evals | grep -q \"dim_arou
 
 echo "== hover never resizes the strip"
 check "window width uses fixed hint metrics, not the live hint text" "grep -q 'hintLine.visible ? hintMetrics.width + 16' $ROOT/plugin/Switcher.qml && ! grep -q 'hintLine.implicitWidth' $ROOT/plugin/Switcher.qml"
-check "hint line visibility doesn't depend on hover" "grep -q 'visible: root.hint && root.menuFor === \"\"' $ROOT/plugin/Switcher.qml"
+check "hint line visibility doesn't depend on hover" "grep -q 'visible: (root.hint || root.arranging) && root.controlMode === \"\"' $ROOT/plugin/Switcher.qml"
 check "no hidden reserved percent width on tabs" "! grep -q 'usageDisplay === \"percent\" || ma.containsMouse' $ROOT/plugin/Switcher.qml"
 
 echo "== QML syntax"
@@ -417,7 +449,7 @@ clients "class.a:0xa1:-1040" "class.b:0xb1:243" "class.c:0xc1:1320"; sed -i 's/"
 : > "$FAKE/calls"; $OA show A
 check "resized agent re-centred in slot ((1280-1000)/2=140)" "evals | grep -q \"address:0xa1', x = 140\""
 check "resized agent keeps its size (no resize back)" "! evals | grep -q \"address:0xa1', x = 793\""
-check "strip anchors under the active agent's height" "grep summon $FAKE/shell | tail -1 | grep -q '\"top\":553'"
+eventually "strip anchors under the active agent's height" "grep summon $FAKE/shell | tail -1 | grep -q '\"top\":553'"
 $OA reset-size A >/dev/null; check "reset-size forgets it" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
 
 echo "== shortcuts cheat sheet"
@@ -560,9 +592,9 @@ check "missing open_on agent logged" "grep -q \"open_on 'Nope'\" $XDG_STATE_HOME
 monitors 1; : > "$FAKE/calls"; $OA direct class.b >/dev/null 2>&1
 check "direct keys unaffected by open_on" "evals | grep -q \"address:0xb1', x = 243\""
 setup_world; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
-printf 'a | A | tui | bin:agent-a | class.a | | \nb | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+printf 'codex | A | tui | bin:agent-a | class.a | | \nclaude | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 script -qc "printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup" /dev/null >/dev/null 2>&1 || printf 'y\ny\n\nB\n' | OMARCHY_AGENTS_NO_GUM=1 $OA setup >/dev/null 2>&1
-check "wizard writes open_on" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
+check "setup retains the opening default" "grep -qE '^open_on = (B|last)' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf && [[ \$(grep -c '^open_on' $XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf) == 1 ]]"
 
 setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"; mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"; cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
 printf 'a | A | tui | bin:agent-a | class.a | | \ng | Grok Bot | tui | bin:agent-b | grok-bot | | \nc | C | tui | bin:agent-c | class.c | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
@@ -607,14 +639,85 @@ check "unknown disable fails" "! $OA disable Nope"
 sed -i 's/^only = .*/only = C, A/' "$C"
 check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
 
+echo "== disabling an open agent"
+setup_world; monitors 1; clients "class.a:0xa1:243" "class.b:0xb1:243"; echo B > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+$OA disable B >/dev/null
+check "disabled open agent closes" "evals | grep -q \"window.close({ window = 'address:0xb1' })\""
+check "other open agents stay running" "! evals | grep -q \"window.close({ window = 'address:0xa1' })\""
+check "membership change hides stale strip" "grep -q 'agentswitcher hide' $FAKE/shell"
+: > "$FAKE/calls"; clients "class.b:0xb1:243"; $OA enable B >/dev/null
+check "enable never closes an agent" "! evals | grep -q \"window.close\""
+$OA disable B >/dev/null
+clients "class.b:0xb1:243" "class.c:0xc1:243"
+jq 'map(.workspace.name = "1")' "$FAKE/clients.json" > "$FAKE/normal.json"; mv "$FAKE/normal.json" "$FAKE/clients.json"
+: > "$FAKE/calls"; $OA disable B >/dev/null
+check "already-disabled detached window can be closed" "evals | grep -q \"window.close({ window = 'address:0xb1' })\""
+check "normal workspace's other agents stay open" "! evals | grep -q \"window.close({ window = 'address:0xc1' })\""
+
+echo "== interactive setup selections"
+setup_registry() {
+  for native in codex claude; do printf '#!/bin/sh\nexit 0\n' > "$T/agents/$native"; chmod +x "$T/agents/$native"; done
+  mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
+  cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
+  printf 'codex | A | tui | bin:agent-a | class.a | | \nclaude | B | tui | bin:agent-b | class.b | | \n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+}
+interactive_setup() {
+  printf '%s' "$1" | OMARCHY_AGENTS_NO_GUM=1 script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+}
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; rm "$C"
+interactive_setup $'\n\n\n\n'
+check "fresh plain setup Enter selects all" "[[ \$($OA list) == \$'A\nB' ]] && grep -q '\\[Y/n\\]' $T/setup.out"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; echo 'only = B' >> "$C"
+interactive_setup $'\n\n\n'
+check "existing plain setup Enter preserves selection" "[[ \$($OA list) == B ]]"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; echo 'only = ' >> "$C"; cp "$C" "$T/before"
+interactive_setup $'\n\n' || true
+check "empty selection does not enable agents or overwrite config" "cmp -s $C $T/before && [[ -z \$($OA list) ]]"
+setup_world; setup_registry; C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf; rm "$C"
+cat > "$T/agents/gum" <<'GUM'
+#!/usr/bin/env bash
+if [[ $1 == input ]]; then exit 0; fi
+if [[ " $* " == *" --no-limit "* ]]; then
+  printf '%s\n' "$*" >> "$FAKE/gum"
+  while (( $# )); do
+    if [[ $1 == --selected ]]; then printf '%s\n' "${2//,/$'\n'}"; exit 0; fi
+    shift
+  done
+else echo last; fi
+GUM
+chmod +x "$T/agents/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "fresh gum setup preselects all" "grep -q -- '--selected A,B' $FAKE/gum && [[ \$($OA list) == \$'A\nB' ]]"
+echo 'only = B' >> "$C"; : > "$FAKE/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "existing gum setup preselects current list" "grep -q -- '--selected B' $FAKE/gum && [[ \$($OA list) == B ]]"
+printf 'A | class.a | agent-a | |\n' >> "$C"
+echo 'only = B, A' >> "$C"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1
+check "Setup preserves existing tab order" "[[ \$($OA list) == \$'B\nA' ]]"
+echo 'only = ' >> "$C"; cp "$C" "$T/before"; : > "$FAKE/gum"
+printf '\n' | script -qec "$OA setup" /dev/null > "$T/setup.out" 2>&1 || true
+check "empty gum selection stays empty" "! grep -q -- '--selected' $FAKE/gum && cmp -s $C $T/before"
+setup_world; echo 'only = cLaSs.C, a' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+check "mixed-case class and name preserve requested order" "[[ \$($OA list) == \$'C\nA' ]]"
+check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
+
+check "strip configuration regression suite" "python3 \"$ROOT/tests/strip-config.py\""
+check "sign-in controller hides and resumes" "\"$TEST_NODE\" \"$ROOT/tests/signin-ui.js\""
+
+check "theme roles and usage-fill contrast" "\"$TEST_NODE\" \"$ROOT/tests/theme-contrast.js\""
+
+check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
+
 echo "== fresh interactive selection defaults"
 selection_fixture() {
   setup_world
+  for native in codex claude; do printf '#!/bin/sh\nexit 0\n' > "$T/agents/$native"; chmod +x "$T/agents/$native"; done
   mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
   cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
-  printf 'a | A | gui | bin:agent-a | class.a | agent-a |\nb | B | gui | bin:agent-b | class.b | agent-b |\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+  printf 'codex | A | gui | bin:agent-a | class.a | agent-a |\nclaude | B | gui | bin:agent-b | class.b | agent-b |\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 }
-interactive_setup() { # A real tty keeps this on the interactive setup path.
+selection_defaults_setup() { # A real tty keeps this on the interactive setup path.
   python3 - "$OA" <<'PY'
 import os, pty, subprocess, sys
 master, slave = pty.openpty()
@@ -633,10 +736,10 @@ PY
 }
 selection_fixture; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 export OMARCHY_AGENTS_NO_GUM=1
-interactive_setup > "$T/interactive" 2>&1; rc=$?
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
 check "fresh plain prompts default to Yes" "(( rc == 0 )) && [[ \$($OA list) == \$'A\nB' ]]"
 selection_fixture; echo 'only = B' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
-interactive_setup > "$T/interactive" 2>&1; rc=$?
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
 check "existing plain prompts retain the selected agents" "(( rc == 0 )) && [[ \$($OA list) == B ]]"
 selection_fixture; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
 unset OMARCHY_AGENTS_NO_GUM
@@ -651,10 +754,10 @@ if [[ $* == *--no-limit* ]]; then
 else echo last; fi
 GUM
 chmod +x "$T/agents/gum"
-interactive_setup > "$T/interactive" 2>&1; rc=$?
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
 check "fresh gum checklist selects all detected agents" "(( rc == 0 )) && [[ \$(cat $FAKE/selected) == A,B ]] && [[ \$($OA list) == \$'A\nB' ]]"
 echo 'only = B' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
-interactive_setup > "$T/interactive" 2>&1; rc=$?
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
 check "existing gum checklist retains its selections" "(( rc == 0 )) && [[ \$(cat $FAKE/selected) == B ]] && [[ \$($OA list) == B ]]"
 
 echo

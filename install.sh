@@ -9,6 +9,8 @@
 #   ./install.sh --with-nautilus   add "Send to agent" to the Nautilus right-click menu
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=share/desktop-state.sh
+source "$SRC/share/desktop-state.sh"
 CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-agent-switcher
 BIN=$HOME/.local/bin
@@ -22,7 +24,7 @@ CONF=$CFG_HOME/omarchy-agent-switcher/agents.conf
 HOOK=$CFG_HOME/omarchy/hooks/theme-set
 MARK="-- omarchy-agent-switcher"
 REQ='require("hypr.agent-switcher")'
-YES=""; SETUP=0; RESTART=1; FROM_SHELL=0; NAUT=0
+GUI=0; YES=""; SETUP=0; RESTART=1; FROM_SHELL=0; NAUT=0
 for a in "$@"; do case $a in --yes|-y|--detect) YES=--yes ;; --setup) SETUP=1 ;; --no-restart) RESTART=0 ;; --with-nautilus) NAUT=1 ;; --from-shell) FROM_SHELL=1; RESTART=0; YES=--default ;; -h|--help) sed -n '2,9p' "$0"; exit 0 ;; esac; done
 
 # First-load install from the panel: only once per version (the marker records version + source).
@@ -54,11 +56,17 @@ if [[ $(readlink -f "$SRC") != $(readlink -f "$PLUG" 2>/dev/null || echo "$PLUG"
 fi
 
 if [[ ! -f $CONF || $SETUP == 1 ]]; then
-  echo ":: choosing agents"
-  if ! "$BIN/omarchy-agents" setup $YES; then
-    mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] || cp "$DATA/agents.conf.default" "$CONF"
+  if [[ -z $YES && -t 0 ]]; then
+    GUI=1
+    [[ -f $CONF ]] || "$BIN/omarchy-agents" setup --empty
+  else
+    echo ":: choosing agents"
+    if ! "$BIN/omarchy-agents" setup $YES; then
+      mkdir -p "$(dirname "$CONF")"; [[ -f $CONF ]] || cp "$DATA/agents.conf.default" "$CONF"
+    fi
   fi
 fi
+
 "$BIN/omarchy-agents" rules
 
 if ! grep -qxF -- "$REQ" "$HYPR"; then
@@ -96,15 +104,25 @@ errs=$(hyprctl configerrors); [[ -z ${errs//[[:space:]]/} ]] || { echo "Hyprland
 
 mkdir -p "$STATE"; echo "$VER $SRC" > "$MARKER"
 if (( FROM_SHELL )); then   # the shell already loaded us; enabling/restarting from inside it would loop
-  notify-send -a "Agent switcher" "Agent switcher installed" "Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Only one agent is enabled; run omarchy-agents setup to add more (or uncomment them in $CONF)." 2>/dev/null || true
+  notify-send -a "Agent switcher" "Agent switcher installed" "Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Only one agent is enabled; use Add agent in the strip to add more." 2>/dev/null || true
   exit 0
 fi
 
 echo ":: enabling shell plugin $ID"
 omarchy-shell -q shell rescanPlugins; sleep 1   # make the shell see the freshly copied plugin
 omarchy plugin enable "$ID" >/dev/null 2>&1 || omarchy-shell -q shell enablePlugin "$ID" '{}'
+if (( RESTART )) && ! desktop_ready; then
+  RESTART=0
+  echo "   (screensaver or lock active: shell restart skipped)"
+fi
 if (( RESTART )); then omarchy-restart-shell >/dev/null 2>&1 || true   # a full restart loads the panel reliably
 else echo "   (--no-restart: run omarchy-restart-shell to load the strip)"; fi
 ok=0; for _ in 1 2 3 4 5 6 7 8 9 10; do omarchy plugin list 2>/dev/null | grep -E "^${ID//./\\.}[[:space:]]+enabled" >/dev/null && { ok=1; break; }; sleep 0.5; done
 (( ok )) || echo "warning: plugin $ID is not enabled; run: omarchy plugin enable $ID" >&2
 echo "done ($("$BIN/omarchy-agents" version)). Press $(grep -m1 '^toggle_key' "$CONF" | cut -d= -f2 | xargs || echo 'SUPER + A') to open. Config: $CONF"
+
+if (( GUI )); then
+  if desktop_ready; then "$BIN/omarchy-agents" configure
+  else echo "First-run picker deferred. Return to the desktop and press Super+A."; fi
+fi
+exit 0

@@ -3,12 +3,20 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
-import qs.Commons
+import qs.Commons as Commons
 
 // Tab strip shown under the omarchy-agents drop-down. All state comes from the
 // omarchy-agents script via `omarchy-shell shell summon <id> <payload>`.
 Item {
   id: root
+  property var shell: null
+  readonly property var idleService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.idle") : null
+  readonly property var lockService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.lock") : null
+  // The aggregate lock flag can stay latched after unlock. Prefer the live
+  // request fields; CLI opens also check the actual session-lock state.
+  readonly property bool shellLockBlocked: lockService ? (typeof lockService.lockRequested === "boolean" && typeof lockService.pendingSessionLock === "boolean" ? lockService.lockRequested || lockService.pendingSessionLock || lockService.strandedLock === true : lockService.locked) : false
+  readonly property bool desktopBlocked: !!((idleService && (idleService.screensaverStartedThisCycle || idleService.screensaverWindowCount > 0)) || shellLockBlocked)
+  onDesktopBlockedChanged: if (desktopBlocked) { close(); run(["hide"]) }
   property bool opened: false
   property var agents: []          // [{ name, icon, state: running|starting|stopped }]
   property string active: ""
@@ -22,7 +30,22 @@ Item {
   property string prevKey: "SUPER + ALT + LEFT"
   property string nextKey: "SUPER + ALT + RIGHT"
   property bool hint: true
-  property color accent: Color.accent      // overridden by `accent =` in agents.conf
+  property color accent: Commons.Color.accent      // overridden by `accent =` in agents.conf
+  property var catalog: ({agents: [], enabled: [], settings: {}})
+  property bool catalogDirty: false
+  property string controlMode: ""
+  property string buttonHint: ""
+  property string controlError: ""
+  property bool arranging: false
+  property string editAgent: ""
+  property bool focusPrimed: false
+  property var actionQueue: []
+  property var loginResult: ({state: "checking"})
+  property bool loginVisible: false
+  property bool loginPresented: false
+  property bool loginCancelled: false
+  property string loginAgent: ""
+  property string pendingLoginAction: ""
   property string menuFor: ""              // agent whose right-click menu is open
   property var shortcuts: []               // [{ keys, action }] generated from the live config
   property string hoverInfo: ""             // usage detail for the hovered tab, shown in the hint line
@@ -32,10 +55,38 @@ Item {
   property real usageCrit: 0.9
   property real usageRefreshMin: 10
 
-  readonly property color fg: Color.foreground
-  readonly property color bg: Color.background
+  // Popup roles follow shell.toml overrides; typed properties convert role strings to colors.
+  readonly property color surfaceBackground: Commons.Color.popups ? Commons.Color.popups.background : Commons.Color.background
+  readonly property color themeText: Commons.Color.popups ? Commons.Color.popups.text : Commons.Color.foreground
+  // Keep the strip opaque for readability, retaining the popup palette.
+  readonly property color bg: Qt.rgba(surfaceBackground.r, surfaceBackground.g, surfaceBackground.b, 1)
+  readonly property color fg: readableText(bg, themeText)
+
+  function luminance(c) {
+    function linear(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+  }
+  function contrast(a, b) {
+    var x = luminance(a), y = luminance(b)
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+  }
+  function readableText(background, preferred) {
+    if (contrast(background, preferred) >= 4.5) return preferred
+    // The theme surface is often the right ink on a light accent pill.
+    if (contrast(background, bg) >= 4.5) return bg
+    return luminance(background) > 0.179 ? "#000000" : "#FFFFFF"
+  }
+
+  function readableFillOpacity(background, ink, overlay, maximum) {
+    for (var a = maximum; a > 0; a -= 0.05) {
+      var mixed = Qt.rgba(background.r * (1-a) + overlay.r * a, background.g * (1-a) + overlay.g * a, background.b * (1-a) + overlay.b * a, 1)
+      if (contrast(mixed, ink) >= 4.5) return a
+    }
+    return 0
+  }
 
   function open(payloadJson) {
+    if (desktopBlocked) return
     try {
       var p = JSON.parse(payloadJson || "{}")
       // Updates are sent in the background; drop any that arrive out of order.
@@ -62,14 +113,122 @@ Item {
       if (p.usageCrit !== undefined) usageCrit = p.usageCrit
       if (p.usageRefreshMin) usageRefreshMin = p.usageRefreshMin
       opened = true
+      if (p.configureOpen) {
+        controlMode = p.picker ? "add" : "settings"
+        loadCatalog()
+      }
     } catch (e) {}
   }
   // Closing the sheet on purpose (key, click, Esc) hands the keyboard back to the agent:
   // the strip is an on-demand layer surface and otherwise keeps keyboard focus.
   function hideSheet() { if (!sheet) return; sheet = false; if (opened) run(["refocus"]) }
   onSheetChanged: run(["sheet-keys", sheet ? "on" : "off"])   // Esc bind only while the sheet is up
-  function toggleSheet() { if (sheet) hideSheet(); else sheet = true }
-  function close() { opened = false; menuFor = ""; sheet = false }
+  function toggleSheet() { if (sheet) hideSheet(); else { endArrange(); controlMode = ""; menuFor = ""; sheet = true; run(["refocus"]) } }
+  function endArrange() { if (!arranging) return; arranging = false; actionQueue = actionQueue.filter(function(a) { return a[0] !== "arrange-keys" }); mutate(["arrange-keys", "off"]) }
+  function dismissControls() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } controlMode = ""; menuFor = ""; endArrange(); run(["refocus"]) }
+  function close() { if (loginProc.running && !loginPresented) { loginCancelled = true; loginProc.signal(15); } endArrange(); opened = false; menuFor = ""; controlMode = ""; sheet = false }
+  function loadCatalog() { if (catalogProc.running) catalogDirty = true; else catalogProc.running = true }
+  function controls(mode, name) { if (desktopBlocked) return; focusPrimed = false; focusTimer.restart(); endArrange(); sheet = false; menuFor = name || ""; controlMode = mode; controlError = ""; loadCatalog() }
+  function toggleControls(mode) { if (controlMode === mode) dismissControls(); else controls(mode, "") }
+  function arrange(name) {
+    if (desktopBlocked) return
+    controlMode = ""; menuFor = ""; sheet = false
+    editAgent = name || active || (agents.length ? agents[0].name : "")
+    if (!editAgent) return
+    arranging = true; focusPrimed = false; focusTimer.restart(); strip.forceActiveFocus()
+    mutate(["arrange-keys", "on"])
+  }
+  function arrangeAction(action) {
+    if (!arranging) { run(["arrange-keys", "off"]); return }
+    var i = agents.findIndex(function(a) { return a.name === editAgent })
+    if (action === "done") { dismissControls(); return }
+    if (action === "activate") { var n = editAgent; dismissControls(); run(["show", n]); return }
+    if (action === "select-left" || action === "select-right") {
+      var next = i + (action === "select-left" ? -1 : 1)
+      if (next >= 0 && next < agents.length) editAgent = agents[next].name
+    } else if (action === "move-left" || action === "move-right") mutate(["move", editAgent, action === "move-left" ? "left" : "right"])
+  }
+  function mutate(args) { actionQueue = actionQueue.concat([args]); startAction() }
+  function startAction() { if (actionProc.running || !actionQueue.length) return; var a = actionQueue[0]; actionQueue = actionQueue.slice(1); actionProc.command = [bin].concat(a); actionProc.running = true }
+  function beginLogin(name, action) {
+    if (desktopBlocked) return
+    if (loginProc.running) return
+    loginCancelled = false
+    loginPresented = false; loginVisible = false
+    pendingLoginAction = action || ""
+    loginAgent = name; loginResult = {state: "checking", name: name}; controlError = "Checking sign-in…"
+    loginProc.command = [Quickshell.env("HOME") + "/.local/share/omarchy-agent-switcher/configure-signin", bin, name]
+    loginProc.running = true
+  }
+  function loginAction(action) {
+    if (action === "closed") { if (!loginVisible || desktopBlocked) return; action = "cancel" }
+    if (action === "hide") { loginVisible = false; return }
+    if (action === "cancel") { loginCancelled = true; loginVisible = false; loginPresented = false; if (loginProc.running) loginProc.signal(15); return }
+    if (!loginProc.running) { beginLogin(loginAgent, action); return }
+    if (action === "open") loginVisible = false
+    else if (action === "check" || action === "confirm") loginResult = {name:loginAgent,state:"checking",message:"Checking sign-in…"}
+    loginProc.write(action + "\n")
+  }
+  function resumeSignin(mode) {
+    if (desktopBlocked || loginCancelled || !loginPresented || !loginProc.running) return "none"
+    endArrange(); opened = false; controlMode = ""; sheet = false
+    loginVisible = mode === "toggle" ? !loginVisible : true
+    return "handled"
+  }
+  function handleLoginResult(r) {
+    if (loginCancelled) return
+    loginResult = r
+    if (r.state === "added") {
+      loginVisible = false; loginPresented = false; controlError = ""; loadCatalog(); run(["configure"])
+    } else if (r.state !== "verified") {
+      loginPresented = true
+      // Opening hides the controller immediately. Preserve that choice while
+      // the agent maps, including an explicit resume during a slow launch.
+      if (r.state !== "opening" && r.state !== "awaiting_login") loginVisible = true
+      if (opened) { close(); run(["hide"]) }
+      if (pendingLoginAction !== "") { var a = pendingLoginAction; pendingLoginAction = ""; loginAction(a) }
+    }
+  }
+  Process {
+    id: catalogProc
+    command: [root.bin, "agents", "--json"]
+    onExited: { if (root.catalogDirty) { root.catalogDirty = false; Qt.callLater(root.loadCatalog) } }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: {
+      try { root.catalog = JSON.parse(text); root.hint = root.catalog.settings.show_hint; root.usageDisplay = root.catalog.settings.usage_display; if (!root.active) root.agents = root.catalog.enabled.map(function(n) { return {name:n,state:"stopped"} }); }
+      catch (e) { root.controlError = "Cannot read installed agents." }
+    } }
+  }
+  Process {
+    id: actionProc
+    stderr: StdioCollector { id: actionErrors; waitForEnd: true }
+    onExited: (code) => {
+      if (code !== 0) root.controlError = String(actionErrors.text).trim() || "The change could not be saved."
+      root.loadCatalog()
+      if (code === 0 && actionProc.command[1] === "disable") root.run(["toggle"])
+      if (root.arranging && actionProc.command[1] !== "arrange-keys") root.run(["arrange-keys", "on"])
+      Qt.callLater(root.startAction)
+    }
+  }
+  Process {
+    id: loginProc
+    stdinEnabled: true
+    stdout: SplitParser { onRead: (data) => {
+      try {
+        root.handleLoginResult(JSON.parse(data))
+      } catch (e) { root.controlError = "Cannot read sign-in status." }
+    } }
+    onExited: (code) => { if (code !== 0 && root.loginPresented && !root.loginCancelled) { root.loginVisible = true; root.loginResult = {name:root.loginAgent,state:"failed",message:"Sign-in stopped. Retry or cancel."} } }
+  }
+  SigninWindow {
+    visible: root.loginVisible && !root.desktopBlocked
+    result: root.loginResult
+    returnShortcut: root.prettyKey(root.toggleKey)
+    canHide: loginProc.running
+    background: root.bg; foreground: root.fg; accent: root.accent
+    onActionRequested: (action) => root.loginAction(action)
+  }
+  Timer { id: focusTimer; interval: 60; onTriggered: { root.focusPrimed = true; strip.forceActiveFocus() } }
+  Component.onDestruction: { run(["arrange-keys", "off"]); if (loginProc.running) loginProc.signal(15) }
   // One process per call, so quick clicks/scrolls are never dropped.
   Component { id: runner; Process { onExited: destroy() } }
   function run(args) { var p = runner.createObject(root, { command: [root.bin].concat(args) }); p.running = true }
@@ -86,6 +245,8 @@ Item {
   // (Approach from TheronRogers' PR #1.)
   Process { id: finishInstall }
   Component.onCompleted: {
+    run(["arrange-keys", "off"])
+    run(["rules", "--reload"])
     var script = decodeURIComponent(String(Qt.resolvedUrl("../install.sh")).replace(/^file:\/\//, ""))
     finishInstall.command = ["bash", "-c", 'if [ -f "$1" ]; then exec "$1" --from-shell; fi', "agent-switcher", script]
     finishInstall.running = true
@@ -115,6 +276,10 @@ Item {
       // agents workspace is moved out by the script (it checks the class against agents.conf).
       if (n === "openwindow") { var d = String(event.data || "").split(","); if (d[1] === "special:agents") root.run(["evict", "0x" + d[0].replace(/^0x/, "")]) }
       if (!root.opened) return
+      if (root.arranging || root.controlMode !== "") {
+        if (n === "workspace" || n === "workspacev2" || n === "focusedmon" || n === "activespecial") { root.dismissControls(); autohideTimer.restart() }
+        return
+      }
       if (n !== "activewindowv2" && n !== "activespecial" && n !== "workspace" && n !== "workspacev2" && n !== "focusedmon" && n !== "openwindow" && n !== "closewindow") return
       if (Date.now() - root.lastShow < 400) return
       root.sheet = false   // click-away / focus change closes the cheat sheet
@@ -132,6 +297,9 @@ Item {
     function status(): string { if (root.opened) root.run(["show", root.active]); return "ok" }   // an agent status changed
     function ping(): string { return "ok" }
     function metrics(): string { return "window=" + win.implicitWidth + "x" + win.implicitHeight + " strip=" + strip.width + " sheet=" + root.sheet }
+    function configure(mode: string, name: string): string { if (mode === "arrange") root.arrange(name); else if (mode === "signin") root.beginLogin(name); else if (["add", "settings", "tab"].indexOf(mode) >= 0) root.controls(mode, name); else return "unknown mode"; return "ok" }
+    function resumeSignin(mode: string): string { return root.resumeSignin(mode) }
+    function arrangeAction(action: string): string { root.arrangeAction(action); return "ok" }
     function shortcuts(): string { if (!root.opened) return "closed"; root.toggleSheet(); return root.sheet ? "shown" : "hidden" }
   }
 
@@ -148,7 +316,7 @@ Item {
   // strip catches the next click anywhere else (including on the agent) and closes the sheet.
   PanelWindow {
     id: sheetCatcher
-    visible: root.opened && root.sheet
+    visible: root.opened && (root.sheet || root.controlMode !== "" || root.arranging)
     screen: root.screenFor(root.monitorName)
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
@@ -156,7 +324,7 @@ Item {
     WlrLayershell.namespace: "omarchy-agent-switcher-sheet"
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: root.hideSheet() }
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: { root.hideSheet(); root.dismissControls() } }
   }
 
   PanelWindow {
@@ -165,25 +333,25 @@ Item {
     screen: root.screenFor(root.monitorName)
     anchors { top: true }
     // The cheat sheet sits above the strip, so the window grows upward.
-    margins.top: root.edge === "top" ? root.stripTop : Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0))
-    implicitWidth: Math.max(strip.width, menu.visible ? menu.width + 16 : 0, hintLine.visible ? hintMetrics.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
-    implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + ((menu.visible || hintLine.visible) ? 20 : 0)
+    margins.top: root.edge === "top" ? root.stripTop : Math.max(0, root.stripTop - (sheetBox.visible ? sheetBox.height + 8 : 0) - (configCard.visible ? configCard.height + 8 : 0))
+    implicitWidth: Math.max(strip.width + 2 * (sideControls.width + 10), configCard.visible ? configCard.width + 16 : 0, hintLine.visible ? hintMetrics.width + 16 : 0, sheetBox.visible ? sheetBox.width + 8 : 0)
+    implicitHeight: (sheetBox.visible ? sheetBox.height + 8 : 0) + 44 + (configCard.visible ? configCard.height + 8 : (hintLine.visible ? 20 : 0))
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchy-agent-switcher"
     WlrLayershell.layer: WlrLayer.Overlay
-    // Never take keyboard focus: an on-demand layer grabs it when it maps, which left
-    // the agent window unable to type after every open. Clicks still work.
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    // Acquire keyboard focus only while configuring or arranging. Ordinary opening
+    // keeps typing in the agent, with no layer-shell focus grab.
+    WlrLayershell.keyboardFocus: root.arranging || root.controlMode !== "" ? (root.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
 
     Rectangle {
       id: sheetBox
       visible: root.sheet
-      anchors.top: root.edge === "top" ? (menu.visible ? menu.bottom : (hintLine.visible ? hintLine.bottom : strip.bottom)) : parent.top
+      anchors.top: root.edge === "top" ? (configCard.visible ? configCard.bottom : (hintLine.visible ? hintLine.bottom : strip.bottom)) : parent.top
       anchors.topMargin: root.edge === "top" ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: grid.implicitWidth + 28
-      height: grid.implicitHeight + sheetTitle.implicitHeight + 30
+      height: grid.implicitHeight + sheetHeader.height + 30
       radius: 14
       color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.94)
       border.width: 2
@@ -191,10 +359,15 @@ Item {
       Accessible.role: Accessible.Dialog
       Accessible.name: "Agent switcher shortcuts"
       MouseArea { anchors.fill: parent; onClicked: root.hideSheet() }
-      Text { id: sheetTitle; x: 14; y: 10; text: "Agent switcher shortcuts"; color: root.accent; font.family: Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold }
+      Row {
+        id: sheetHeader
+        x: 14; y: 10; width: parent.width - 28; height: 30; spacing: 8
+        Text { width: parent.width - sheetCloseButton.width - 8; text: "Agent switcher shortcuts"; color: root.accent; font.family: Commons.Style.font.family; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+        CloseButton { id: sheetCloseButton; Accessible.name: "Close shortcuts"; background: root.bg; foreground: root.fg; accent: root.accent; onClicked: root.hideSheet() }
+      }
       Grid {
         id: grid
-        x: 14; anchors.top: sheetTitle.bottom; anchors.topMargin: 8
+        x: 14; anchors.top: sheetHeader.bottom; anchors.topMargin: 8
         columns: 2; columnSpacing: 18; rowSpacing: 4
         Repeater {
           model: root.shortcuts.length * 2
@@ -203,7 +376,7 @@ Item {
             readonly property var e: root.shortcuts[Math.floor(index / 2)]
             text: index % 2 === 0 ? e.keys : e.action
             color: index % 2 === 0 ? root.fg : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.7)
-            font.family: Style.font.family; font.pixelSize: 11
+            font.family: Commons.Style.font.family; font.pixelSize: 11
             font.weight: index % 2 === 0 ? Font.DemiBold : Font.Normal
           }
         }
@@ -212,25 +385,26 @@ Item {
 
     Rectangle {
       id: strip
-      anchors.top: (sheetBox.visible && root.edge !== "top") ? sheetBox.bottom : parent.top
-      anchors.topMargin: (sheetBox.visible && root.edge !== "top") ? 8 : 0
+      anchors.top: root.edge !== "top" && configCard.visible ? configCard.bottom : (sheetBox.visible && root.edge !== "top") ? sheetBox.bottom : parent.top
+      anchors.topMargin: root.edge !== "top" && (configCard.visible || sheetBox.visible) ? 8 : 0
       anchors.horizontalCenter: parent.horizontalCenter
       width: row.implicitWidth + 16
       height: 44
       radius: 22
-      color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.78)
+      color: root.bg
       border.width: 2
       border.color: root.accent
       focus: true
       Accessible.role: Accessible.PageTabList
       Accessible.name: "Agent switcher"
 
-      Keys.onLeftPressed: root.run(["prev"])
-      Keys.onRightPressed: root.run(["next"])
-      Keys.onTabPressed: root.run(["next"])
-      Keys.onBacktabPressed: root.run(["prev"])
-      Keys.onEscapePressed: { if (root.sheet) root.hideSheet(); else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
-      Keys.onPressed: (e) => { if (e.key === Qt.Key_Question || e.text === "?") { root.toggleSheet(); e.accepted = true } else if (e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
+      Keys.onLeftPressed: { if (root.arranging) root.arrangeAction("select-left"); else root.run(["prev"]) }
+      Keys.onRightPressed: { if (root.arranging) root.arrangeAction("select-right"); else root.run(["next"]) }
+      Keys.onTabPressed: (e) => { if (root.controlMode !== "") e.accepted = false; else root.run(["next"]) }
+      Keys.onBacktabPressed: (e) => { if (root.controlMode !== "") e.accepted = false; else root.run(["prev"]) }
+      Keys.onEscapePressed: { if (root.arranging || root.controlMode !== "") root.dismissControls(); else if (root.sheet) root.hideSheet(); else if (root.menuFor !== "") root.menuFor = ""; else root.run(["hide"]) }
+      Keys.onReturnPressed: { if (root.arranging) root.arrangeAction("activate") }
+      Keys.onPressed: (e) => { if (root.controlMode === "" && !root.arranging && e.key >= Qt.Key_1 && e.key <= Qt.Key_9) root.run(["show", String(e.key - Qt.Key_1)]) }
 
       WheelHandler { onWheel: (e) => root.wheel(e.angleDelta.y) }
 
@@ -238,6 +412,7 @@ Item {
         id: row
         anchors.centerIn: parent
         spacing: 4
+        Text { visible: !root.agents.length; text: "No agents"; color: root.fg; font.family: Commons.Style.font.family; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
         Repeater {
           model: root.agents
           Rectangle {
@@ -246,15 +421,16 @@ Item {
             required property int index
             readonly property bool sel: modelData.name === root.active
             readonly property string st: modelData.state || "running"
+            readonly property color ink: sel ? root.readableText(root.accent, root.themeText) : root.fg
             width: content.implicitWidth + 30
             height: 32
             radius: 16
-            opacity: st === "stopped" && !sel ? 0.6 : 1.0
-            color: sel ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.85)
-                       : (ma.containsMouse ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22) : "transparent")
+            opacity: 1.0
+            color: sel ? root.accent
+                       : (ma.containsMouse ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, root.readableFillOpacity(root.bg, root.fg, root.accent, 0.22)) : "transparent")
             // keyboard focus ring on the active tab
-            border.width: (sel && strip.activeFocus) ? 2 : ((!sel && ma.containsMouse) ? 1 : 0)
-            border.color: (sel && strip.activeFocus) ? root.fg : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
+            border.width: (root.arranging && root.editAgent === modelData.name) ? 2 : ((!sel && ma.containsMouse) ? 1 : 0)
+            border.color: (root.arranging && root.editAgent === modelData.name) ? root.fg : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
             Behavior on color { ColorAnimation { duration: 140 } }
             readonly property real usage: modelData.usage === undefined ? -1 : modelData.usage
             readonly property bool hasUsage: usage >= 0 && root.usageDisplay !== "off"
@@ -266,7 +442,7 @@ Item {
               width: parent.width * Math.min(1, Math.max(0, tab.usage))
               radius: Math.min(parent.radius, width / 2)
               color: root.usageColor(tab.usage)
-              opacity: tab.sel ? 0.45 : 0.3
+              opacity: root.readableFillOpacity(tab.sel ? root.accent : root.bg, tab.ink, root.usageColor(tab.usage), tab.sel ? 0.45 : 0.3)
               Behavior on width { NumberAnimation { duration: 300 } }
             }
             readonly property string status: modelData.status || "idle"
@@ -301,8 +477,8 @@ Item {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.modelData.name + (tab.st === "starting" ? " …" : "")
-                color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
-                font.family: Style.font.family
+                color: tab.ink
+                font.family: Commons.Style.font.family
                 font.weight: tab.sel ? Font.DemiBold : Font.Normal
                 font.pixelSize: 13
               }
@@ -314,9 +490,9 @@ Item {
                 width: pctMetrics.width
                 horizontalAlignment: Text.AlignRight
                 text: Math.round(tab.usage * 100) + "%"
-                color: tab.sel ? "#FFFFFF" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.78)
-                font.family: Style.font.family; font.pixelSize: 12
-                TextMetrics { id: pctMetrics; font.family: Style.font.family; font.pixelSize: 12; text: "100%" }
+                color: tab.ink
+                font.family: Commons.Style.font.family; font.pixelSize: 12
+                TextMetrics { id: pctMetrics; font.family: Commons.Style.font.family; font.pixelSize: 12; text: "100%" }
               }
             }
             MouseArea {
@@ -327,14 +503,44 @@ Item {
                 ? tab.modelData.name + ": " + (tab.modelData.usageLabel || Math.round(tab.usage * 100) + "%") + "  ·  can lag or differ slightly from the provider" : ""
               acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
               onClicked: (m) => {
-                strip.forceActiveFocus()
-                if (m.button === Qt.RightButton) root.menuFor = (root.menuFor === tab.modelData.name ? "" : tab.modelData.name)
+                if (m.button === Qt.RightButton) root.controls("tab", tab.modelData.name)
                 else if (m.button === Qt.MiddleButton) root.run(["close", tab.modelData.name])
-                else { root.menuFor = ""; root.run(["show", tab.modelData.name]) }
+                else if (root.arranging) root.editAgent = tab.modelData.name
+                else { root.dismissControls(); root.run(["show", tab.modelData.name]) }
               }
             }
           }
         }
+
+      }
+    }
+
+    // Reserve space without moving the centered tab pill when the actions appear.
+    HoverHandler {
+      id: stripHover
+      parent: win.contentItem
+      blocking: false
+      readonly property bool overStrip: hovered && point.position.x >= strip.x - 5 && point.position.x <= strip.x + strip.width + sideControls.width + 11 && point.position.y >= strip.y - 5 && point.position.y <= strip.y + strip.height + 5
+    }
+    Row {
+      id: sideControls
+      anchors.left: strip.right; anchors.leftMargin: 6
+      anchors.verticalCenter: strip.verticalCenter
+      spacing: 6
+      opacity: stripHover.overStrip ? 1 : 0
+      enabled: stripHover.overStrip
+      Behavior on opacity { NumberAnimation { duration: 100 } }
+      HoverAction {
+        glyph: "+"; label: "Add agent"
+        background: root.bg; foreground: root.fg; accent: root.accent
+        onHovered: (over) => root.buttonHint = over ? "Add agent" : ""
+        onClicked: root.toggleControls("add")
+      }
+      HoverAction {
+        glyph: "\ue615"; label: "Settings"; ring: false // Same glyph as Omarchy's Setup/settings menu.
+        background: root.bg; foreground: root.fg; accent: root.accent
+        onHovered: (over) => root.buttonHint = over ? "Settings" : ""
+        onClicked: root.toggleControls("settings")
       }
     }
 
@@ -343,7 +549,7 @@ Item {
       id: hintLine
       // Fixed size: the line's width comes from the default hint text (never from the hover text),
       // and it is always reserved, so hovering can't resize/re-centre the strip window.
-      visible: root.hint && root.menuFor === ""
+      visible: (root.hint || root.arranging) && root.controlMode === ""
       anchors.top: strip.bottom
       anchors.topMargin: 4
       anchors.horizontalCenter: strip.horizontalCenter
@@ -351,37 +557,31 @@ Item {
       horizontalAlignment: Text.AlignHCenter
       elide: Text.ElideRight
       TextMetrics { id: hintMetrics; font: hintLine.font; text: hintLine.defaultText }
-      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) : "?") + " shortcuts"
+      readonly property string defaultText: ((root.shortcutsKey !== "" ? root.prettyKey(root.shortcutsKey) + " shortcuts" : "Shortcuts in Settings")
             + (root.prevKey !== "" && root.nextKey !== "" ? "  ·  " + root.prettyKey(root.prevKey) + " / " + root.prettyKey(root.nextKey) + " switch" : "")
             + "  ·  " + root.prettyKey(root.toggleKey) + " close")
-      text: root.hoverInfo !== "" ? root.hoverInfo : defaultText
-      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
-      font.family: Style.font.family; font.pixelSize: 10
+      text: root.arranging ? "←/→ select · Super+Shift+←/→ move · Enter open · Esc done" : (root.buttonHint !== "" ? root.buttonHint : root.hoverInfo !== "" ? root.hoverInfo : defaultText)
+      color: root.fg
+      font.family: Commons.Style.font.family; font.pixelSize: 10
       style: Text.Outline; styleColor: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.6)
     }
 
-    // Right-click menu (replaces the hint line while open).
-    Row {
-      id: menu
-      visible: root.menuFor !== ""
-      anchors.top: strip.bottom
-      anchors.topMargin: 3
-      anchors.horizontalCenter: strip.horizontalCenter
-      spacing: 6
-      Repeater {
-        model: [ { label: "Restart", cmd: "restart" }, { label: "Close", cmd: "close" } ]
-        Rectangle {
-          required property var modelData
-          width: lbl.implicitWidth + 18; height: 18; radius: 9
-          color: mma.containsMouse ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.5) : Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.85)
-          border.width: 1; border.color: root.accent
-          Accessible.role: Accessible.Button
-          Accessible.name: modelData.label + " " + root.menuFor
-          Text { id: lbl; anchors.centerIn: parent; text: modelData.label + " " + root.menuFor; color: root.fg; font.family: Style.font.family; font.pixelSize: 10 }
-          MouseArea { id: mma; anchors.fill: parent; hoverEnabled: true; onClicked: { root.run([modelData.cmd, root.menuFor]); root.menuFor = "" } }
-        }
+    ConfigureCard {
+      id: configCard
+      visible: root.controlMode !== ""
+      mode: root.controlMode; agent: root.menuFor; catalog: root.catalog; error: root.controlError
+      shortcuts: root.catalog.shortcuts || root.shortcuts
+      maximumContentHeight: Math.min(740, Math.max(180, root.screenFor(root.monitorName) ? root.screenFor(root.monitorName).height - root.stripTop - 130 : 600))
+      anchors.top: root.edge === "top" ? strip.bottom : parent.top; anchors.topMargin: root.edge === "top" ? 8 : 0; anchors.horizontalCenter: strip.horizontalCenter
+      background: root.bg; foreground: root.fg; accent: root.accent
+      onDismissed: root.dismissControls()
+      onAddRequested: (name) => root.beginLogin(name)
+      onArrangeRequested: (name) => root.arrange(name)
+      onSettingRequested: (key, value) => root.mutate(["setting", key, value])
+      onCommandRequested: (command, name) => {
+        if (command === "left" || command === "right") root.mutate(["move", name, command])
+        else { root.dismissControls(); root.mutate([command, name]) }
       }
     }
-
   }
 }
