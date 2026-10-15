@@ -627,7 +627,7 @@ C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
 check "disable keeps the others, in order" "grep -qx 'only = A, C' $C"
 check "list hides the disabled agent" "[[ \$($OA list) == \$'A\nC' ]]"
 check "hidden agent is left out of the window rule" "! grep -q 'class\\.b' $R"
-$OA enable class.b >/dev/null
+$OA enable CLASS.B >/dev/null
 check "enable matches the window class, ignoring case" "grep -qx 'only = A, C, B' $C"
 printf '# D | class.d | agent-a | |\n' >> "$C"
 $OA enable D >/dev/null
@@ -708,6 +708,57 @@ check "sign-in controller hides and resumes" "\"$TEST_NODE\" \"$ROOT/tests/signi
 check "theme roles and usage-fill contrast" "\"$TEST_NODE\" \"$ROOT/tests/theme-contrast.js\""
 
 check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
+
+echo "== fresh interactive selection defaults"
+selection_fixture() {
+  setup_world
+  for native in codex claude; do printf '#!/bin/sh\nexit 0\n' > "$T/agents/$native"; chmod +x "$T/agents/$native"; done
+  mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
+  cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
+  printf 'codex | A | gui | bin:agent-a | class.a | agent-a |\nclaude | B | gui | bin:agent-b | class.b | agent-b |\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+}
+selection_defaults_setup() { # A real tty keeps this on the interactive setup path.
+  python3 - "$OA" <<'PY'
+import os, pty, subprocess, sys
+master, slave = pty.openpty()
+proc = subprocess.Popen([sys.argv[1], 'setup'], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+os.close(slave)
+try:
+    os.write(master, b'\n' * 8)
+    output = proc.communicate(timeout=15)[0]
+    sys.stdout.buffer.write(output)
+    sys.exit(proc.returncode)
+finally:
+    if proc.poll() is None:
+        proc.kill(); proc.wait()
+    os.close(master)
+PY
+}
+selection_fixture; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+export OMARCHY_AGENTS_NO_GUM=1
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
+check "fresh plain prompts default to Yes" "(( rc == 0 )) && [[ \$($OA list) == \$'A\nB' ]]"
+selection_fixture; echo 'only = B' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
+check "existing plain prompts retain the selected agents" "(( rc == 0 )) && [[ \$($OA list) == B ]]"
+selection_fixture; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+unset OMARCHY_AGENTS_NO_GUM
+cat > "$T/agents/gum" <<'GUM'
+#!/bin/bash
+[[ $1 == input ]] && exit 0
+if [[ $* == *--no-limit* ]]; then
+  selected=""
+  while (( $# )); do [[ $1 == --selected ]] && { selected=$2; break; }; shift; done
+  printf '%s' "$selected" > "$FAKE/selected"
+  printf '%s\n' "$selected" | tr ',' '\n'
+else echo last; fi
+GUM
+chmod +x "$T/agents/gum"
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
+check "fresh gum checklist selects all detected agents" "(( rc == 0 )) && [[ \$(cat $FAKE/selected) == A,B ]] && [[ \$($OA list) == \$'A\nB' ]]"
+echo 'only = B' >> "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+selection_defaults_setup > "$T/interactive" 2>&1; rc=$?
+check "existing gum checklist retains its selections" "(( rc == 0 )) && [[ \$(cat $FAKE/selected) == B ]] && [[ \$($OA list) == B ]]"
 
 echo
 echo "passed: $PASS  failed: $FAILN"

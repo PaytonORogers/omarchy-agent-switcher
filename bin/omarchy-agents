@@ -428,12 +428,14 @@ setup() {
   else
     load_conf
     local -a pre=(); local shown n
-    for f in "${labels[@]}"; do
-      shown=0
-      [[ -f $CONF ]] || shown=1
-      for n in "${names[@]+"${names[@]}"}"; do [[ $n == "$f" ]] && shown=1; done
-      (( shown )) && pre+=("$f")
-    done
+    if [[ ! -f $CONF ]]; then pre=("${labels[@]}")
+    else
+      for f in "${labels[@]}"; do
+        shown=0
+        for n in "${names[@]+"${names[@]}"}"; do [[ $n == "$f" ]] && shown=1; done
+        (( shown )) && pre+=("$f")
+      done
+    fi
     echo "Detected agents (unchecked ones stay off the strip):"
     if have_gum; then
       local selected=""
