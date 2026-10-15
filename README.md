@@ -51,6 +51,10 @@ It checks dependencies first and swaps files in atomically, so a failed install 
 Uninstall: `./uninstall.sh` reverts all of that and keeps your config. `./uninstall.sh --purge` removes the config too.
 
 ## Choosing agents
+Interactive setup opens only requested sign-in windows outside the panel before adding selected tabs. For agents without an automated check, choose `y` if already ready or `l` to open sign-in. During sign-in, close the app normally or use `c` to close its window and check/confirm readiness. Codex and Claude Code use their native login-status commands, and Grok Bot uses a fresh app-only service check. Unavailable checks use explicit confirmation that the agent is ready to use. Press `s` to skip an agent or `q` to cancel without changing your config. Temporary parking rules are restored on completion or interruption. Native status reports the CLI authentication state; it does not guarantee a remote session is still valid.
+
+`setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
+
 Installed does not mean shown. The strip is the `only` list when that line is set, otherwise every agent line in the config. A first `omarchy plugin add` still enables one agent and leaves the rest commented out.
 
 ```sh

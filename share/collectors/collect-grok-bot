@@ -473,11 +473,30 @@ def collect_limits(force: bool) -> dict[str, Any]:
     return result
 
 
+def check_app_login() -> int:
+    """0 means a fresh authenticated response; 2 means unable to verify.
+
+    Never use cached usage, Cursor credentials, or rotate a refresh token here.
+    The desktop may hold newer credentials in memory, so failure is unknown.
+    """
+    try:
+        access, _ = grok_bot_tokens()
+        if not access or jwt_expired(access, skew_seconds=0):
+            return 2
+        status, _ = cursor_rpc("GetSandUsageStatus", access)
+        return 0 if status == 200 else 2
+    except Exception:
+        return 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print the Grok Bot usage record as JSON")
+    parser.add_argument("--check-login", action="store_true", help="Check Grok Bot session without printing credentials or changing auth")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--limits-only", action="store_true")
     args = parser.parse_args()
+    if args.check_login:
+        return check_app_login()
 
     limits = collect_limits(args.force)
     has_limits = len(limits["limits"]) > 0

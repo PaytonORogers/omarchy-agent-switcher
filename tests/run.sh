@@ -12,6 +12,8 @@ check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 # Fresh fake world: HOME, config, fake agent binaries, fake hyprland state.
 setup_world() {
   T=$(mktemp -d); export HOME=$T/home FAKE=$T/fake XDG_CONFIG_HOME=$T/home/.config XDG_STATE_HOME=$T/home/.local/state XDG_DATA_HOME=$T/home/.local/share
+  export XDG_RUNTIME_DIR=$T/runtime
+  mkdir -p "$XDG_RUNTIME_DIR"
   unset OMARCHY_AGENTS_CONF
   mkdir -p "$HOME/.local/bin" "$FAKE" "$XDG_CONFIG_HOME/omarchy-agent-switcher" "$XDG_CONFIG_HOME/hypr" "$T/agents"
   export PATH="$ROOT/tests/stubs:$T/agents:/usr/bin:/bin"
@@ -34,7 +36,7 @@ CONF
 monitors() { # monitors <special-visible 0|1> [second monitor]
   local sp=""; [[ $1 == 1 ]] && sp="special:agents"
   local m2=""; [[ ${2:-} == 2 ]] && m2=',{"name":"HDMI-A-1","x":1280,"y":0,"width":1920,"height":1080,"scale":1,"transform":0,"focused":false,"specialWorkspace":{"name":""}}'
-  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
+  echo "[{\"name\":\"eDP-1\",\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"scale\":1.5,\"transform\":0,\"focused\":true,\"activeWorkspace\":{\"id\":2},\"specialWorkspace\":{\"name\":\"$sp\"}}$m2]" > "$FAKE/monitors.json"
 }
 clients() { # clients "class:addr:x" ...
   local out="[" c; for c in "$@"; do IFS=: read -r cl ad x <<<"$c"
@@ -101,6 +103,21 @@ setup_world; monitors 1 2; clients "class.a:0xa1:243" "class.b:0xb1:3240" "class
 $OA show B
 check "outgoing parks left of the whole desktop" "evals | grep -q \"address:0xa1', x = -833\""
 check "incoming came from right of the whole desktop (3240)" "! evals | grep -q \"address:0xb1', prop = 'no_anim'\""
+
+echo "== reuse a tiled sign-in window"
+setup_world; clients "class.a:0xa1:0"
+jq 'map(.floating = false | .workspace.name = "2" | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "sign-in window floats before moving to the panel and resizing" "evals | grep -q \"window.float({ window = 'address:0xa1', action = 'set' }).*workspace = 'special:agents'.*window.resize({ window = 'address:0xa1', x = 793\""
+check "sign-in window is reused rather than launched again" "! grep -q 'launch A:' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+setup_world; clients "class.a:0xa1:243"
+jq 'map(.floating = false)' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA show A >/dev/null
+check "tiled window matching target size is still resized after floating" "evals | grep -q \"action = 'set'.*window.resize({ window = 'address:0xa1'\""
+setup_world; monitors 1; clients "class.a:0xa1:0"; echo A > "$XDG_STATE_HOME/omarchy-agent-switcher/last"
+jq 'map(.floating = false | .size = [1280,720])' "$FAKE/clients.json" > "$FAKE/tiled.json"; mv "$FAKE/tiled.json" "$FAKE/clients.json"
+$OA hide >/dev/null
+check "tiled sign-in size is not saved as a user panel resize" "[[ ! -f $XDG_STATE_HOME/omarchy-agent-switcher/size/class.a@eDP-1 ]]"
 
 echo "== unknown / missing agents"
 setup_world; clients "class.a:0xa1:243"; : > "$FAKE/calls"
@@ -587,6 +604,10 @@ bash "$ROOT/uninstall.sh" >/dev/null 2>&1
 check "uninstall restores hyprland.lua" "[[ \$(cat $XDG_CONFIG_HOME/hypr/hyprland.lua) == '-- user config' ]]"
 check "uninstall removes nautilus ext + desktop entry" "[[ ! -e $XDG_DATA_HOME/nautilus-python/extensions/omarchy-agent-switcher.py && ! -e $XDG_DATA_HOME/applications/omarchy-agents-send.desktop ]]"
 
+check "interactive sign-in regression suite" "python3 \"$ROOT/tests/setup-login.py\""
+
+check "Grok Bot session-check regression suite" "python3 \"$ROOT/tests/grok-login.py\""
+
 echo "== strip allow-list"
 setup_world
 check "no only line shows every installed agent" "[[ \$($OA list) == \$'A\nB\nC' ]]"
@@ -610,9 +631,10 @@ check "only order is the tab order" "[[ \$($OA list) == \$'C\nA' ]]"
 echo "== fresh interactive selection defaults"
 selection_fixture() {
   setup_world
+  for native in codex claude; do printf '#!/bin/sh\nexit 0\n' > "$T/agents/$native"; chmod +x "$T/agents/$native"; done
   mkdir -p "$XDG_DATA_HOME/omarchy-agent-switcher"
   cp "$ROOT/share/agents.conf.default" "$XDG_DATA_HOME/omarchy-agent-switcher/"
-  printf 'a | A | gui | bin:agent-a | class.a | agent-a |\nb | B | gui | bin:agent-b | class.b | agent-b |\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
+  printf 'codex | A | gui | bin:agent-a | class.a | agent-a |\nclaude | B | gui | bin:agent-b | class.b | agent-b |\n' > "$XDG_DATA_HOME/omarchy-agent-switcher/registry.conf"
 }
 interactive_setup() { # A real tty keeps this on the interactive setup path.
   python3 - "$OA" <<'PY'
