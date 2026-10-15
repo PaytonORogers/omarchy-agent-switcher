@@ -55,7 +55,18 @@ Interactive setup opens only requested sign-in windows outside the panel before 
 
 `setup --yes`, `--default`, `--detect`, and setup without a terminal keep their existing behavior and do not verify sign-in.
 
-`omarchy-agents setup` re-runs detection at any time (`--yes` takes everything it finds). Detection uses
+Installed does not mean shown. The strip is the `only` list when that line is set, otherwise every agent line in the config. A first `omarchy plugin add` still enables one agent and leaves the rest commented out.
+
+```sh
+omarchy-agents agents                 # what is on and what is installed but hidden
+omarchy-agents disable Cursor Codex   # hide these; the rest stay, in the same order
+omarchy-agents enable "Claude Code"   # add one back
+omarchy-agents setup                  # checklist of everything detected (space toggles)
+```
+
+`only = Grok Bot, Claude Code` in `agents.conf` is the same list, in tab order. `setup` rewrites the agent lines from what you check and clears `only`. `setup --yes` still takes every detected agent.
+
+Detection uses
 `share/registry.conf`, one line per known agent:
 
 ```
@@ -152,7 +163,7 @@ The Super+Alt+←/→ defaults shadow Omarchy's "move window to group" only whil
 are restored on close (only if the Omarchy default was really there). If you pick keys that already do something else, `omarchy-agents rules` warns you.
 
 ## CLI
-`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | send [--text T] | send-files <agent|-> <path…> | usage [--force|--print] | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
+`omarchy-agents toggle | show <name> | next | prev | hide | direct <class> | close <name> | restart <name> | reset-size [name|all] | shortcuts | geometry | send [--text T] | send-files <agent|-> <path…> | usage [--force|--print] | agents | enable <name>... | disable <name>... | list | setup [--yes] | rules [--reload] | doctor | hint on|off|toggle | version`
 
 `omarchy-agents hint off` hides the hint line right away and saves `show_hint = false` in your config. Use `hint on` or `hint toggle` to change it back.
 
@@ -162,6 +173,7 @@ are restored on close (only if the Omarchy default was really there). If you pic
 - **Agent tab shows a plain terminal or takes a while the first time:** that's the agent's own first run. For example, Omarchy's `~/.local/bin/claude` installs Claude Code with mise on first launch, which is a one-time download of ~200 MB, and Codex shows a sign-in screen until you log in. Switching never waits for a starting agent: its window pops into the panel when it's ready, and you get a "Starting …" notification.
 - **Launch lines:** `$HOME` and `~` are expanded, and bare program names are resolved against PATH plus mise shims, `~/.local/bin`, npm, bun and cargo before launching. Apps started through uwsm/systemd don't see your shell's PATH.
 - **Pre-launch:** `start_hidden = grok-bot, org.omarchy.agent.claude` takes a comma list of classes to start hidden at login, so the first open is instant.
+- **Too many tabs:** `omarchy-agents disable NAME`, or edit `only =` in `agents.conf`. Installed agents you leave out stay off the strip.
 - **Tab missing:** its program wasn't found. `doctor` lists skipped agents.
 - **Agent didn't start:** you get a notification after 20 s. Logs are in `~/.local/state/omarchy-agent-switcher/log` (`doctor` shows the tail); `OMARCHY_AGENTS_DEBUG=1 omarchy-agents show <name>` prints them live.
 - **Config errors:** `hyprctl configerrors`. The generated file is `~/.config/hypr/agent-switcher.lua`.
