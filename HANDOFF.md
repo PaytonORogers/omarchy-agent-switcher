@@ -86,19 +86,27 @@ green "new reply" dot (validated). Feasibility of approval/working (next sprint)
   buttons on approval cards (then map in notif-watch); (2) a local status API/file from the app.
 - Window title is static ("Grok Bot"): not usable.
 
-## Status 2026-10-11 20:25 PT (ready to merge)
+## Status 2026-10-26 (weekly)
 
-Laptop-tested line is `feature/status-dots`, fast-forwarded onto `v1.2`. The merge is a PR from `v1.2` to `master`. Payton merges.
+Branch heads (GitHub):
+- master: `1bd1e6e` (233/233 tests)
+- v1.2: `76cc800` Merge PR #8 (253/253 tests)
+- fix/codex-stuck-windows: `8952c28` (not merged; needs `runtime_init` conflict resolve vs #8)
 
-Verified on the laptop: a click outside the agent focuses that window and hides the strip; moving the pointer off the agent does not; strip hover no longer resizes; the purple right edge is gone; the status sound plays. While the panel is open, `follow_mouse` and `float_switch_override_focus` are both 0, and both are restored on close. Hyprland 0.56 still keyboard-focuses on pointer motion when that override is left at its default and the pointer crosses a floating window onto a tiled one, which is what was closing the strip.
+Merged closed:
+- #7 enable/disable + only= list (`437b47e`, 2026-10-13)
+- #8 sign-in verification during setup (`76cc800`, 2026-10-15)
+- #11 and #12 (2026-10-12)
 
-Not in this merge:
-- PR #7 / issue #3: an `only` list so an installed agent can stay off the strip. This machine's `agents.conf` lists Grok Bot and Grok Build only.
-- PR #8 / issue #4: reopen the panel when a sign-in browser closes. This branch already moves any non-agent window off `special:agents` and hides the panel. It does not reopen.
-- Grok Bot "Sign-in expired" and richer approval/working states: research only, below.
+Open draft PR:
+- #15 TheronRogers "Configure agents from the strip" head `5baf1eb` base v1.2, closes #14, 270/270 tests, no review yet. Likely conflicts with #8 (own sign-in controller). Verdict held for Payton.
 
-- **#5 click-through: fixed (5cc4ab4, plus the pointer-motion follow-up) and checked on the laptop.** `dim_around` makes Hyprland use the whole monitor as the window's hit box (`CWindow::getWindowBoxUnified`), so every outside click hit the agent. With `click_through` on, agents get `dim_around 0` and the screen is dimmed with `decoration:dim_special` (max(user, 0.4)) while the panel is open. The user's values are restored on close.
-- **Strip hover resize/flicker: fixed and checked.** The window width comes from TextMetrics of the default hint text, and the hover text is elided into that fixed width.
-- **Purple right-edge artifact: gone.** The reserved "100%" width on the last tab is gone except in `usage_display=percent` mode.
-- **Sound: player is `pw-play`, and a focused agent is silent.** Payton heard it play. The watcher is dbus-monitor. If a Grok Bot chime is ever late, the app sent the notification late. Omarchy's notification service plays no sound of its own.
-- **Grok Bot usage "Sign-in expired": research only, nothing built.** The collector reads `~/.config/Grok Bot/sand-secrets.json` (cursor-accounts → access/refresh tokens). Those tokens are encrypted Chromium-style v10, with the key from the "Grok Bot Safe Storage" libsecret item (fallback "peanuts"). It falls back to `~/.cursor/auth.json`. When the token has expired it refreshes in memory via `api2.cursor.sh/oauth/token` and never writes back. So it already reuses the app's current session. "Sign-in expired" means the stored access token is expired AND the refresh failed. The likely cause is refresh-token rotation, or the app keeping its fresh token only in memory and writing the file only at login (the file was last written at 19:28 when the app restarted). Options: re-read after the app rewrites the file, or ask the app to expose usage. A silent refresh that writes the file back would race the app and could log it out, so don't. Security: sand-secrets.json is mode 644 (world-readable, encrypted, but the fallback key is public), which is the app's problem to fix. A re-login in the app is the reliable fix today.
+Open issues: #3, #4, #14
+
+Held for Payton:
+- #15 review/verdict
+- shellcheck install on the box
+- v1.2 → master merge (merge commit; no fast-forward)
+- codex-fix PR (fix/codex-stuck-windows → master) after runtime_init resolve
+
+Next: push this HANDOFF refresh once Payton OK; then #15 review.
