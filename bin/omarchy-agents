@@ -63,6 +63,8 @@ available() {
     local -a t; read -r -a t <<<"$1"; local j id=""; for (( j=${pi%% *}+1; j<${#t[@]}; j++ )); do [[ ${t[$j]} == run || ${t[$j]} == -* ]] && continue; id=${t[$j]}; break; done
     [[ -n $id ]] && flatpak info "$id" >/dev/null 2>&1; return
   fi
+  # A URL means a web-app wrapper (omarchy-launch-webapp https://claude.ai): the wrapper is what must exist.
+  if [[ $x == *://* ]]; then local -a t; read -r -a t <<<"$1"; local w; for w in "${t[@]}"; do [[ $w == omarchy-launch-webapp || $w == omarchy-launch-or-focus-webapp ]] && { find_prog "$w" >/dev/null; return; }; done; return 1; fi
   [[ $x == */* ]] && { [[ -x $x ]]; return; }
   find_prog "$x" >/dev/null
 }
@@ -259,10 +261,18 @@ detect() { # prints registry lines whose detection matches (and whose fields are
     (( ok == 0 )) && echo "$line"
   done < "$REGISTRY"
 }
+desktop_file() { # desktop_file <name.desktop>: first matching path in the XDG application dirs
+  local dd e; [[ $1 =~ ^[A-Za-z0-9._+-]+$ ]] || return 0
+  for dd in ${XDG_DATA_HOME:-$HOME/.local/share} ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do for e in ${dd//:/ }; do [[ -f $e/applications/$1 ]] && { echo "$e/applications/$1"; return 0; }; done; done
+}
 agent_line() { # registry line -> agents.conf line
   local id n kind det c l ic p k=""; IFS='|' read -r id n kind det c l ic <<<"$1"
   id=$(trim "$id"); n=$(trim "$n"); kind=$(trim "$kind"); det=$(trim "$det"); c=$(trim "$c"); l=$(trim "$l"); ic=$(trim "$ic")
   n=${n//|/}; ic=${ic//|/}
+  # GUI apps whose window class changed between builds (Claude Desktop: Claude / claude-desktop / com.anthropic.Claude):
+  # prefer the installed desktop file's StartupWMClass over the registry guess.
+  if [[ $kind == gui ]]; then local df wm; df=""; local cand; for cand in "${det#desktop:}" "$id.desktop" "$c.desktop"; do [[ $cand == *.desktop ]] || continue; df=$(desktop_file "$cand"); [[ -n $df ]] && break; done
+    if [[ -n $df ]]; then wm=$(sed -n 's/^StartupWMClass=//p' "$df" | head -1 | tr -d '[:space:]'); valid_class "$wm" && c=$wm; fi; fi
   if [[ -z $l && $kind == tui ]]; then p=$(find_prog "${det#*:}"); l="omarchy-launch-tui --app-id=$c ${p/#$HOME/\$HOME}"; fi
   [[ -f $CONF ]] && k=$(awk -F'|' -v c="$c" '{x=$2; gsub(/^[ \t]+|[ \t]+$/,"",x)} x==c {gsub(/^[ \t]+|[ \t]+$/,"",$4); print $4; exit}' "$CONF")
   printf '%-14s | %-26s | %s | %s | %s\n' "$n" "$c" "$l" "$k" "$ic"

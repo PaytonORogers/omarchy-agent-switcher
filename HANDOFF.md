@@ -110,3 +110,16 @@ Held for Payton:
 - codex-fix PR (fix/codex-stuck-windows → master) after runtime_init resolve
 
 Next: push this HANDOFF refresh once Payton OK; then #15 review.
+
+## feature/claude-agent (2026-11-02, box-tested only, not pushed)
+Base: 4da946b (talos-v1.2 HANDOFF refresh on Olympus, on top of GitHub v1.2 76cc800). Payton prefers GUI apps, so this adds desktop entries; the Claude Code and Codex terminal entries are unchanged.
+- `claude-desktop` (Claude): detect `bin:claude-desktop` (Anthropic's official Linux build; AUR `claude-desktop` or `claude-desktop-extra`), launch `uwsm-app -- claude-desktop`, bundled `claude` icon. Registry class `com.anthropic.Claude` (current upstream desktopName).
+- `claude-web` (Claude (web)): detect `desktop:Claude.desktop` (what `omarchy-webapp-install` writes), launch `omarchy-launch-webapp https://claude.ai`, class `chrome-claude.ai__-Default`.
+- `codex-desktop` (Codex Desktop): community repackage of OpenAI's Linux app (`ilysenko/codex-desktop-linux`, AUR `codex-desktop-git`), class guess `codex-desktop`, `codex` icon. OpenAI's official ChatGPT Linux app already matches the existing `chatgpt-desktop` entry.
+- `agent_line`: for gui entries, setup uses `StartupWMClass` from `<detect>.desktop`, `<id>.desktop` or `<class>.desktop` when it is a valid class. This exists because Claude Desktop's class changed between builds (Claude, then claude-desktop, then com.anthropic.Claude).
+- `available`: a launch line whose program is a URL counts as available when `omarchy-launch-webapp` (or `omarchy-launch-or-focus-webapp`) is on PATH.
+- Tests: new section "Claude / Codex desktop entries" in tests/run.sh (12 checks). shellcheck was not run because it is not installed on the box and the install was not approved.
+- Status dots: not wired up for the desktop apps. The Claude Code hooks only cover the CLI. Chromium web-app notifications arrive with app_name "Chromium" (omarchy #7260), so the web app cannot be told apart by app name. Desktop app notification names are unknown.
+- Laptop checks: `hyprctl clients` class for claude-desktop, the Claude web app (Chromium gives a `chrome-` prefix, Brave gives `brave-`) and codex-desktop/chatgpt; `grep StartupWMClass` in their desktop files; whether each icon renders; the notification app_name for Claude Desktop and ChatGPT.
+- Open: which Claude GUI Payton installs (recommendation: AUR `claude-desktop`). See /workspace/talos/claude-2026-11-02/gui-options.md on the box.
+- Branches: master 1bd1e6e, v1.2 76cc800, talos-v1.2 4da946b (Olympus, unpushed), fix/codex-stuck-windows 8952c28, feature/claude-agent (this).

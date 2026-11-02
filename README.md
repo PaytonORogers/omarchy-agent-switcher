@@ -72,7 +72,7 @@ Detection uses
 ```
 id | name | gui|tui | bin:<cmd> / desktop:<file.desktop> / flatpak:<app-id> | window class | launch | icon
 ```
-- **Desktop apps:** Grok Bot, Claude, ChatGPT, Cursor, Hermes.
+- **Desktop apps:** Grok Bot, Claude (official Linux app, `claude-desktop`), Claude as an Omarchy web app (`Claude.desktop` from `omarchy-webapp-install`), ChatGPT (includes Codex), Codex Desktop (community `codex-desktop`), Cursor, Hermes. For desktop apps, setup uses the installed desktop file's `StartupWMClass` as the window class when it has one.
 - **Terminal agents:** grok, claude, codex, gemini, opencode, aider, cursor-agent, copilot, crush, goose, amp, qwen, hermes. They are found on PATH, including mise / npm / bun / cargo / `~/.local/bin` shims, and launched with `omarchy-launch-tui --app-id=<unique class>`.
 
 PRs adding agents are welcome. It's one line.

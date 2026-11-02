@@ -266,6 +266,44 @@ echo '[]' > "$FAKE/clients.json"; : > "$FAKE/calls"; monitors 0
 $OA show Cursor >/dev/null 2>&1; sleep 0.3
 check "no window yet: launches via the registry command" "grep -q 'launch Cursor' $XDG_STATE_HOME/omarchy-agent-switcher/log"
 
+echo "== Claude / Codex desktop entries (registry -> setup -> class from desktop file -> web app)"
+check "registry keeps the Claude Code and Codex terminal entries" "grep -qE '^claude +\| Claude Code +\| tui \| bin:claude +\| org\.omarchy\.agent\.claude' $ROOT/share/registry.conf && grep -qE '^codex +\| Codex +\| tui \| bin:codex +\| org\.omarchy\.agent\.codex' $ROOT/share/registry.conf"
+check "registry has Claude Desktop, Claude web app and Codex Desktop gui entries" "grep -qE '^claude-desktop +\| Claude +\| gui \| bin:claude-desktop' $ROOT/share/registry.conf && grep -qE '^claude-web +\| .*\| gui \| desktop:Claude\.desktop .*omarchy-launch-webapp https://claude\.ai' $ROOT/share/registry.conf && grep -qE '^codex-desktop +\| .*\| gui \| bin:codex-desktop' $ROOT/share/registry.conf"
+setup_world; rm "$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf"
+D=$XDG_DATA_HOME/omarchy-agent-switcher; mkdir -p "$D"; cp "$ROOT/share/registry.conf" "$ROOT/share/agents.conf.default" "$D/"
+for b in agent-a agent-b agent-c; do rm -f "$T/agents/$b"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/claude-desktop"; chmod +x "$T/agents/claude-desktop"
+CF=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
+OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "no desktop file: Claude Desktop uses the registry class com.anthropic.Claude" "grep -qE '^Claude +\| com\.anthropic\.Claude +\| uwsm-app -- claude-desktop' $CF"
+check "Claude Desktop tab uses the bundled claude icon" "grep -E '^Claude ' $CF | grep -qE '\| claude\$'"
+mkdir -p "$XDG_DATA_HOME/applications"
+printf '[Desktop Entry]\nName=Claude\nExec=/usr/bin/claude-desktop %%u\nIcon=claude-desktop\nStartupWMClass=claude-desktop\nType=Application\n' > "$XDG_DATA_HOME/applications/claude-desktop.desktop"
+rm "$CF"; OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "desktop file StartupWMClass overrides the registry class" "grep -qE '^Claude +\| claude-desktop +\| uwsm-app -- claude-desktop' $CF"
+rm "$XDG_DATA_HOME/applications/claude-desktop.desktop"
+printf '[Desktop Entry]\nName=Claude\nStartupWMClass=bad class;rm\n' > "$XDG_DATA_HOME/applications/com.anthropic.Claude.desktop"
+rm "$CF"; OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "invalid StartupWMClass is ignored" "grep -qE '^Claude +\| com\.anthropic\.Claude +\|' $CF"
+rm "$XDG_DATA_HOME/applications/com.anthropic.Claude.desktop"
+$OA rules >/dev/null 2>&1
+check "Claude rule is case-insensitive and matches com.anthropic.claude" "python3 -c 'import re,sys; s=open(sys.argv[1]).read(); m=re.search(r\"o.window\(\\\"(.*?)\\\"\", s); r=re.compile(m.group(1).replace(chr(92)*2, chr(92))); sys.exit(0 if r.match(\"com.anthropic.Claude\") and r.match(\"com.anthropic.claude\") and not r.match(\"claude\") else 1)' $R"
+monitors 0; clients "com.anthropic.Claude:0xd0:243"; : > "$FAKE/calls"
+$OA show Claude >/dev/null 2>&1; sleep 0.5
+check "existing Claude Desktop window is moved in, not relaunched" "evals | grep -q 'address:0xd0' && ! grep -q 'launch Claude' $XDG_STATE_HOME/omarchy-agent-switcher/log"
+rm -f "$T/agents/claude-desktop"
+printf '[Desktop Entry]\nName=Claude\nExec=omarchy-launch-webapp https://claude.ai\nIcon=%s/Claude.png\nType=Application\n' "$XDG_DATA_HOME/applications/icons" > "$XDG_DATA_HOME/applications/Claude.desktop"
+rm "$CF"; OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "Omarchy Claude web app is detected from Claude.desktop" "grep -qE '^Claude \(web\) +\| chrome-claude\.ai__-Default +\| omarchy-launch-webapp https://claude\.ai' $CF"
+check "web app without omarchy-launch-webapp is not available" "! $OA list 2>/dev/null | grep -q 'Claude (web)'"
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/omarchy-launch-webapp"; chmod +x "$T/agents/omarchy-launch-webapp"
+check "web app with omarchy-launch-webapp is available" "$OA list 2>/dev/null | grep -qx 'Claude (web)'"
+rm -f "$T/agents/omarchy-launch-webapp" "$XDG_DATA_HOME/applications/Claude.desktop"
+printf '#!/bin/sh\nexit 0\n' > "$T/agents/codex-desktop"; chmod +x "$T/agents/codex-desktop"
+rm "$CF"; OMARCHY_AGENTS_NO_GUM=1 $OA setup --yes </dev/null >/dev/null 2>&1
+check "Codex Desktop is detected as a gui tab with the codex icon" "grep -qE '^Codex Desktop +\| codex-desktop +\| uwsm-app -- codex-desktop +\|.*\| codex\$' $CF"
+rm -f "$T/agents/codex-desktop"
+
 echo "== agent status dots"
 setup_world; monitors 0; clients "class.a:0xa1:243" "class.b:0xb1:243"
 C=$XDG_CONFIG_HOME/omarchy-agent-switcher/agents.conf
